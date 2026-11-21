@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "benchmark:triage:test": "node scripts/benchmark-triage.test.js",
-    "frontend:budget": "node scripts/frontend-budget.js"
+    "frontend:budget": "node scripts/frontend-budget.js",
+    "contracts:validate-manifests": "node scripts/validate-deployment-manifests.js",
+    "contracts:verify-manifest": "node scripts/validate-deployment-manifests.js",
+    "backend:test": "npm --prefix xconfess-backend run backend:test",
+    "frontend:test": "npm --prefix xconfess-frontend test"
   }
 }
