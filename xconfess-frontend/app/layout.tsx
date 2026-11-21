@@ -16,6 +16,7 @@ import { NetworkStatusProvider } from "@/app/lib/providers/NetworkStatusProvider
 import ShortcutsProvider from "@/app/components/common/ShortcutsProvider";
 import { WalletProvider } from "@/lib/providers/WalletProvider";
 import { I18nProvider } from "./lib/i18n";
+import RouteAnnouncer from "./components/common/RouteAnnouncer";
 
 export const metadata: Metadata = {
   title: "xConfess - Anonymous Confessions",
@@ -98,6 +99,7 @@ export default function RootLayout({
                       <ShortcutsProvider>
                       <NetworkBanner />
                       <WebSocketIndicator />
+                      <RouteAnnouncer />
                       {children}
 
                       </ShortcutsProvider>

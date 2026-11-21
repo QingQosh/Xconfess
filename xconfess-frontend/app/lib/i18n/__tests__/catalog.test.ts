@@ -5,6 +5,7 @@ import {
 } from '../types';
 import { en } from '../locales/en';
 import { es } from '../locales/es';
+import { ar } from '../locales/ar';
 
 describe('i18n Message Catalogues and Typed Coverage', () => {
   it('en catalogue has 100% coverage of all required message keys', () => {
@@ -24,6 +25,16 @@ describe('i18n Message Catalogues and Typed Coverage', () => {
       expect(es[key]).toBeDefined();
       expect(typeof es[key]).toBe('string');
       expect(es[key].trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('ar catalogue has 100% coverage of all required message keys', () => {
+    expect(() => assertCompleteCatalog('ar', ar)).not.toThrow();
+
+    for (const key of REQUIRED_MESSAGE_KEYS) {
+      expect(ar[key]).toBeDefined();
+      expect(typeof ar[key]).toBe('string');
+      expect(ar[key].trim().length).toBeGreaterThan(0);
     }
   });
 

@@ -159,7 +159,7 @@ export const ConfessionCard = memo(({ confession }: Props) => {
             className="group block rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--primary)]"
             aria-label={`Read full confession: ${confession.content.slice(0, 80)}...`}
           >
-            <p className="mb-3 font-editorial text-[1.35rem] leading-[1.42] text-[var(--foreground)] transition-colors group-hover:text-[var(--primary-deep)] sm:mb-4 sm:text-[1.65rem] break-words">
+            <p dir="auto" className="mb-3 font-editorial text-[1.35rem] leading-[1.42] text-[var(--foreground)] transition-colors group-hover:text-[var(--primary-deep)] sm:mb-4 sm:text-[1.65rem] break-words">
               {confession.content}
             </p>
           </ScrollRestorationLink>

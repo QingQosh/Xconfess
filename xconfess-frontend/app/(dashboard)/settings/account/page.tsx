@@ -589,7 +589,7 @@ export default function AccountSettingsPage() {
           disabled={flow.isFirstStep}
           className="flex items-center gap-2 rounded-lg border border-gray-700 bg-gray-800 px-4 py-2 text-sm font-medium text-gray-300 transition-colors hover:bg-gray-750 hover:text-white disabled:cursor-not-allowed disabled:opacity-50"
         >
-          <ArrowLeft className="h-4 w-4" />
+          <ArrowLeft className="directional-icon h-4 w-4" />
           Back
         </button>
         {!isReview && (
@@ -599,7 +599,7 @@ export default function AccountSettingsPage() {
             className="flex items-center gap-2 rounded-lg bg-purple-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-purple-700"
           >
             Next
-            <ArrowRight className="h-4 w-4" />
+            <ArrowRight className="directional-icon h-4 w-4" />
           </button>
         )}
       </nav>

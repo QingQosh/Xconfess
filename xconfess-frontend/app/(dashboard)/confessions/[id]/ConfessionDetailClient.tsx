@@ -328,7 +328,7 @@ export function ConfessionDetailClient({
             </div>
           </CardHeader>
           <CardContent className="pt-0">
-            <div className="prose prose-zinc max-w-none text-zinc-900 dark:prose-invert dark:text-white prose-p:text-lg prose-p:leading-relaxed prose-a:break-all">
+            <div dir="auto" className="prose prose-zinc max-w-none text-zinc-900 dark:prose-invert dark:text-white prose-p:text-lg prose-p:leading-relaxed prose-a:break-all">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {sanitizeMarkdown(confession.content)}
               </ReactMarkdown>

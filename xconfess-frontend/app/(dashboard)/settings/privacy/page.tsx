@@ -560,7 +560,7 @@ export default function PrivacySettingsPage() {
             className="inline-flex items-center gap-1.5 rounded-lg bg-gray-700 hover:bg-gray-600 px-3 py-2 text-xs font-medium text-white transition-colors"
           >
             Manage notification preferences
-            <ArrowRight className="h-3.5 w-3.5" />
+            <ArrowRight className="directional-icon h-3.5 w-3.5" />
           </Link>
         </div>
       </div>
