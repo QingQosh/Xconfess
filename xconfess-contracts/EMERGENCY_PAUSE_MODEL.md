@@ -193,6 +193,12 @@ backfill or migration; the getter returns `None` for each record not yet
 created, while the existing `Paused` key and legacy event payloads are
 unchanged.
 
+Rolling back to pre-audit WASM preserves the pause flag and legacy pause
+behavior, but that code ignores the new audit keys and emits no `pause_audit`
+events. Transitions made during rollback are therefore not included in the
+stored latest records; the legacy events remain the only record for that
+period, and no audit backfill is performed.
+
 ## Security Considerations
 
 1. **Immutable History**: All pause/unpause actions emit events for full audit trail
