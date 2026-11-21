@@ -21,6 +21,14 @@ jest.mock(
   () => ({ SessionService: class SessionService {} }),
   { virtual: true },
 );
+jest.mock(
+  "../../user/user.service",
+  () => ({ UserService: class UserService {} }),
+);
+jest.mock(
+  "../../auth/lockout.service",
+  () => ({ LockoutService: class LockoutService {} }),
+);
 
 function createChainableQB(overrides: Partial<any> = {}) {
   const qb: any = {
@@ -1045,5 +1053,27 @@ describe("AdminService", () => {
         service.banUser(999, 200, null, undefined),
       );
     });
+  });
+
+  it("disconnects notification and moderation sockets after persisted session revocation", async () => {
+    const notificationGateway = { revokeUserSessions: jest.fn().mockReturnValue(1) };
+    const adminGateway = { revokeUserSessions: jest.fn().mockReturnValue(1) };
+    (service as any).notificationGateway = notificationGateway;
+    (service as any).adminGateway = adminGateway;
+    userRepository.findOne.mockResolvedValue({ id: 9 });
+    sessionService.revokeAllForUser.mockResolvedValue(2);
+
+    await expect(
+      service.revokeUserSessions(9, 3, "security review"),
+    ).resolves.toEqual({ revoked: 2 });
+
+    expect(notificationGateway.revokeUserSessions).toHaveBeenCalledWith(
+      "9",
+      "SESSION_REVOKED",
+    );
+    expect(adminGateway.revokeUserSessions).toHaveBeenCalledWith(
+      9,
+      "SESSION_REVOKED",
+    );
   });
 });

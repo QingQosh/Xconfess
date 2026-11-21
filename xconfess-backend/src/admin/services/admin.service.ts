@@ -6,6 +6,7 @@
   ConflictException,
   GoneException,
   Logger,
+  Optional,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { EntityManager, In, Repository } from "typeorm";
@@ -31,6 +32,8 @@ import {
 import { JobManagementService } from "../../notifications/services/job-management.service";
 import { LockoutService } from "../../auth/lockout.service";
 import { SessionService } from "../../auth/session.service";
+import { AdminGateway } from "../realtime/admin.gateway";
+import { NotificationGateway } from "../../notifications/gateways/notification.gateway";
 import {
   AdminActionApproval,
   AdminActionApprovalStatus,
@@ -98,6 +101,10 @@ export class AdminService {
     private readonly sessionService: SessionService,
     @InjectRepository(AdminActionApproval)
     private readonly actionApprovalRepository: Repository<AdminActionApproval>,
+    @Optional()
+    private readonly adminGateway?: AdminGateway,
+    @Optional()
+    private readonly notificationGateway?: NotificationGateway,
   ) {}
 
   private get aesKey(): string {
@@ -828,6 +835,12 @@ export class AdminService {
       reason: "admin_revocation",
       adminId,
     });
+
+    await this.notificationGateway?.revokeUserSessions(
+      String(userId),
+      "SESSION_REVOKED",
+    );
+    this.adminGateway?.revokeUserSessions(userId, "SESSION_REVOKED");
 
     await this.moderationService.logAction(
       adminId,
