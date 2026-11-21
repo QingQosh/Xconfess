@@ -29,6 +29,10 @@ jest.mock(
   "../../auth/lockout.service",
   () => ({ LockoutService: class LockoutService {} }),
 );
+jest.mock(
+  "../../cache/cache.service",
+  () => ({ CacheService: class CacheService {} }),
+);
 
 function createChainableQB(overrides: Partial<any> = {}) {
   const qb: any = {
@@ -137,11 +141,20 @@ describe("AdminService", () => {
     },
   };
 
+  const cacheService: any = {
+    buildKey: jest.fn((...parts: string[]) => parts.join(":")),
+    del: jest.fn(),
+    invalidateSegment: jest.fn(),
+  };
+
   let service: AdminService;
 
   beforeEach(() => {
     jest.resetAllMocks();
     actionApprovalRepository.create.mockImplementation((approval: any) => approval);
+    cacheService.buildKey.mockImplementation((...parts: string[]) =>
+      parts.join(":"),
+    );
     reportRepository.manager.transaction.mockImplementation(async (work: any) =>
       work({
         getRepository: (entity: any) => {
@@ -193,6 +206,7 @@ describe("AdminService", () => {
       lockoutService,
       sessionService,
       actionApprovalRepository,
+      cacheService,
     );
   });
 
@@ -369,6 +383,43 @@ describe("AdminService", () => {
     await expect(
       service.resolveReport("r1", 1, null, undefined),
     ).rejects.toBeInstanceOf(BadRequestException);
+  });
+
+  it("does not allow a dismissed report to be resolved", async () => {
+    reportRepository.findOne.mockResolvedValue({
+      id: "r1",
+      status: ReportStatus.DISMISSED,
+    });
+
+    await expect(
+      service.resolveReport("r1", 1, null, undefined),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(reportRepository.save).not.toHaveBeenCalled();
+  });
+
+  it("does not allow a resolved report to be dismissed", async () => {
+    reportRepository.findOne.mockResolvedValue({
+      id: "r1",
+      status: ReportStatus.RESOLVED,
+    });
+
+    await expect(
+      service.dismissReport("r1", 1, null),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(reportRepository.save).not.toHaveBeenCalled();
+  });
+
+  it("allows a reviewing report to be resolved", async () => {
+    reportRepository.findOne.mockResolvedValue({
+      id: "r1",
+      status: ReportStatus.REVIEWING,
+      confessionId: "c1",
+    });
+    reportRepository.save.mockImplementation(async (report: any) => report);
+
+    await expect(
+      service.resolveReport("r1", 1, "review complete"),
+    ).resolves.toMatchObject({ status: ReportStatus.RESOLVED });
   });
 
   it("resolveReport rolls back status update when audit logging fails", async () => {
@@ -762,6 +813,11 @@ describe("AdminService", () => {
     confessionRepository.findOne.mockResolvedValue(confession2);
     const unhidden = await service.unhideConfession("c1", 1, {} as any);
     expect(unhidden.isHidden).toBe(false);
+    expect(cacheService.del).toHaveBeenCalledWith("confession:c1");
+    expect(cacheService.invalidateSegment).toHaveBeenCalledWith(
+      "confessions",
+      "confession moderation state changed",
+    );
   });
 
   it("ban/unban user toggles is_active and logs", async () => {

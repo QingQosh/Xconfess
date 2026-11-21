@@ -45,6 +45,7 @@ import {
   decodeCursor,
   encodeCursor,
 } from "../../common/pagination";
+import { CacheService } from "../../cache/cache.service";
 
 export interface BulkResolveOutcome {
   id: string;
@@ -101,6 +102,7 @@ export class AdminService {
     private readonly sessionService: SessionService,
     @InjectRepository(AdminActionApproval)
     private readonly actionApprovalRepository: Repository<AdminActionApproval>,
+    private readonly cacheService: CacheService,
     @Optional()
     private readonly adminGateway?: AdminGateway,
     @Optional()
@@ -115,6 +117,16 @@ export class AdminService {
     work: (manager: EntityManager) => Promise<T>,
   ): Promise<T> {
     return this.reportRepository.manager.transaction(work);
+  }
+
+  private async invalidateConfessionCaches(id: string): Promise<void> {
+    await Promise.all([
+      this.cacheService.del(this.cacheService.buildKey("confession", id)),
+      this.cacheService.invalidateSegment(
+        "confessions",
+        "confession moderation state changed",
+      ),
+    ]);
   }
 
   async reviewSupportAccess(
@@ -291,14 +303,20 @@ export class AdminService {
 
     const saved = await this.runInModerationTransaction(async (manager) => {
       const reportRepo = manager.getRepository(Report);
-      const report = await reportRepo.findOne({ where: { id } });
+      const report = await reportRepo.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
 
       if (!report) {
         throw new NotFoundException("Report not found");
       }
 
-      if (report.status === ReportStatus.RESOLVED) {
-        throw new BadRequestException("Report already resolved");
+      if (
+        report.status === ReportStatus.RESOLVED ||
+        report.status === ReportStatus.DISMISSED
+      ) {
+        throw new BadRequestException(`Report is already ${report.status}`);
       }
 
       report.status = ReportStatus.RESOLVED;
@@ -341,14 +359,20 @@ export class AdminService {
   ): Promise<Report> {
     const saved = await this.runInModerationTransaction(async (manager) => {
       const reportRepo = manager.getRepository(Report);
-      const report = await reportRepo.findOne({ where: { id } });
+      const report = await reportRepo.findOne({
+        where: { id },
+        lock: { mode: "pessimistic_write" },
+      });
 
       if (!report) {
         throw new NotFoundException("Report not found");
       }
 
-      if (report.status === ReportStatus.DISMISSED) {
-        throw new BadRequestException("Report already dismissed");
+      if (
+        report.status === ReportStatus.RESOLVED ||
+        report.status === ReportStatus.DISMISSED
+      ) {
+        throw new BadRequestException(`Report is already ${report.status}`);
       }
 
       report.status = ReportStatus.DISMISSED;
@@ -405,7 +429,10 @@ export class AdminService {
           continue;
         }
 
-        if (report.status !== ReportStatus.PENDING) {
+        if (
+          report.status !== ReportStatus.PENDING &&
+          report.status !== ReportStatus.REVIEWING
+        ) {
           outcomes.push({
             id,
             outcome: "skipped",
@@ -625,6 +652,7 @@ export class AdminService {
     if (outcome.expired) {
       throw new GoneException("Action approval has expired");
     }
+    await this.invalidateConfessionCaches(outcome.approval.targetId);
     return outcome.approval;
   }
 
@@ -754,7 +782,7 @@ export class AdminService {
     reason: string | null,
     request?: Request,
   ): Promise<AnonymousConfession> {
-    return this.runInModerationTransaction(async (manager) => {
+    const saved = await this.runInModerationTransaction(async (manager) => {
       const confessionRepo = manager.getRepository(AnonymousConfession);
       const confession = await confessionRepo.findOne({
         where: { id },
@@ -762,6 +790,9 @@ export class AdminService {
 
       if (!confession) {
         throw new NotFoundException("Confession not found");
+      }
+      if (confession.isHidden) {
+        throw new ConflictException("Confession is already hidden");
       }
 
       confession.isHidden = true;
@@ -780,6 +811,8 @@ export class AdminService {
 
       return saved;
     });
+    await this.invalidateConfessionCaches(id);
+    return saved;
   }
 
   async unhideConfession(
@@ -787,7 +820,7 @@ export class AdminService {
     adminId: number,
     request?: Request,
   ): Promise<AnonymousConfession> {
-    return this.runInModerationTransaction(async (manager) => {
+    const saved = await this.runInModerationTransaction(async (manager) => {
       const confessionRepo = manager.getRepository(AnonymousConfession);
       const confession = await confessionRepo.findOne({
         where: { id },
@@ -795,6 +828,12 @@ export class AdminService {
 
       if (!confession) {
         throw new NotFoundException("Confession not found");
+      }
+      if (confession.isDeleted) {
+        throw new ConflictException("Deleted confessions cannot be restored");
+      }
+      if (!confession.isHidden) {
+        throw new ConflictException("Confession is not hidden");
       }
 
       confession.isHidden = false;
@@ -813,6 +852,8 @@ export class AdminService {
 
       return saved;
     });
+    await this.invalidateConfessionCaches(id);
+    return saved;
   }
 
   // Session rotation / revocation (admin-safe)
