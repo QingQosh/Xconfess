@@ -89,6 +89,8 @@ export interface GetConfessionByIdResult {
   commentCount?: number;
   isAnchored?: boolean;
   stellarTxHash?: string | null;
+  stellarHash?: string | null;
+  anchoredAt?: string | null;
   anchorStatus?: "confirmed" | "pending" | "not_anchored";
   author?: { id: string; username?: string; avatar?: string | null; stellarAddress?: string };
 }
@@ -140,6 +142,8 @@ export async function getConfessionById(
     };
     if ("isAnchored" in data) result.isAnchored = data.isAnchored;
     if ("stellarTxHash" in data) result.stellarTxHash = data.stellarTxHash ?? null;
+    if ("stellarHash" in data) result.stellarHash = data.stellarHash ?? null;
+    if ("anchoredAt" in data) result.anchoredAt = data.anchoredAt ?? null;
     result.anchorStatus =
       (data.anchorStatus as GetConfessionByIdResult["anchorStatus"]) ??
       (result.isAnchored

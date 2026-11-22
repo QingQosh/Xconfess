@@ -136,6 +136,8 @@ export async function GET(
         : (data.commentCount ?? 0),
       isAnchored: data.isAnchored ?? data.is_anchored ?? false,
       stellarTxHash: data.stellarTxHash ?? data.stellar_tx_hash ?? null,
+      stellarHash: data.stellarHash ?? data.stellar_hash ?? null,
+      anchoredAt: data.anchoredAt ?? data.anchored_at ?? null,
       author: data.anonymousUser
         ? { id: data.anonymousUser.id, username: "Anonymous", avatar: null }
         : undefined,
