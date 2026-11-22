@@ -31,6 +31,8 @@ async function getConfession(id: string) {
       commentCount: data.commentCount ?? 0,
       isAnchored: data.isAnchored ?? false,
       stellarTxHash: data.stellarTxHash ?? null,
+      stellarHash: data.stellarHash ?? null,
+      anchoredAt: data.anchoredAt ?? null,
       anchorStatus:
         data.anchorStatus ??
         (data.isAnchored || data.is_anchored

@@ -4,6 +4,10 @@
   "private": true,
   "scripts": {
     "benchmark:triage:test": "node scripts/benchmark-triage.test.js",
-    "frontend:budget": "node scripts/frontend-budget.js"
+    "frontend:budget": "node scripts/frontend-budget.js",
+    "contract:fmt:check": "npm --prefix xconfess-contracts run fmt:check",
+    "contract:lint": "npm --prefix xconfess-contracts run lint",
+    "contract:test": "npm --prefix xconfess-contracts run test",
+    "check:abi-drift": "bash xconfess-contracts/scripts/check-abi-drift.sh"
   }
 }
