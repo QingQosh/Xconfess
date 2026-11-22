@@ -2,6 +2,50 @@
 
 This directory contains utilities and factory helpers for creating reproducible test data, specifically designed to address the challenge of testing pending anchor and tip states in the Xconfess backend.
 
+## Deterministic scheduled and delayed jobs
+
+Use the fixtures in `test/deterministic/deterministic-fixtures.ts` when
+testing scheduled publication, expiry, retry, or delayed notification work.
+`DeterministicClock.freeze()` controls both `Date.now()` and zero-argument
+`new Date()`. Advance it with `clock.advance(milliseconds)` to cross due-time,
+retention, or retry boundaries without sleeping. Invalid timestamps and
+negative/non-finite advances throw `RangeError`; always restore the clock in a
+`finally` block or test teardown.
+
+`MockQueueFixture.add()` accepts `delay`, `attempts`, and BullMQ-style fixed or
+exponential `backoff` settings. `processSync(handler, { concurrency })` only
+claims jobs due at the current clock instant and starts at most the configured
+number of handlers concurrently. Each call processes one attempt per eligible
+job; retryable failures become delayed until their backoff expires, and an
+exhausted job moves to the DLQ. Invalid attempts, delays, backoff values, and
+worker concurrency reject explicitly. Delayed and retryable jobs are included
+in leak detection.
+
+Example:
+
+```typescript
+const clock = new DeterministicClock('2026-09-24T10:00:00.000Z');
+clock.freeze();
+try {
+  const job = await queue.add('send-digest', { userId: 'user-1' }, {
+    delay: 60_000,
+    attempts: 3,
+    backoff: { type: 'exponential', delay: 1_000 },
+  });
+  await queue.processSync(handler, { concurrency: 2 });
+  expect(job.status).toBe('delayed');
+  clock.advance(60_000);
+  await queue.processSync(handler, { concurrency: 2 });
+} finally {
+  clock.restore();
+}
+```
+
+These are in-memory test fixtures, not a replacement for PostgreSQL/Redis
+integration tests. Use them to verify job timing and worker/retry behavior
+without wall-clock sleeps; the real queue and database remain responsible for
+production persistence and locking.
+
 ## Overview
 
 The seed helpers located in `factories/` provide deterministic, reusable methods for creating complex test scenarios without manual data crafting. This significantly reduces setup time and ensures test consistency across the development team.

@@ -2,6 +2,7 @@ import {
   Injectable,
   BadRequestException,
   ConflictException,
+  ForbiddenException,
   NotFoundException,
   InternalServerErrorException,
   Optional,
@@ -37,6 +38,7 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { AnonymousUserService } from '../user/anonymous-user.service';
 import { EntityManager, Repository } from 'typeorm';
 import { AnonymousUser } from '../user/entities/anonymous-user.entity';
+import { User } from '../user/entities/user.entity';
 import { AnonymousConfession } from './entities/confession.entity';
 import { AppLogger } from '../logger/logger.service';
 import { maskUserId } from '../utils/mask-user-id';
@@ -54,6 +56,17 @@ import { mapToSlimConfession } from './utils/confession-mapper';
 import { AnomalyDetectionService } from '../anomaly/anomaly-detection.service';
 import { ConfessionIdempotencyService } from './confession-idempotency.service';
 import { AnalyticsEventService } from '../analytics/analytics-event.service';
+import { SearchIndexOutboxService } from '../search-discovery/search-index-outbox.service';
+import { SearchOutboxAction } from '../search-discovery/entities/search-index-outbox.entity';
+import { TopicService } from '../topic/topic.service';
+import { Tag } from './entities/tag.entity';
+import { randomBytes } from 'crypto';
+
+export interface ArchiveActor {
+  id?: string | number | null;
+  role?: string | null;
+  type?: string | null;
+}
 
 @Injectable()
 export class ConfessionService {
@@ -75,10 +88,45 @@ export class ConfessionService {
     private readonly idempotencyService: ConfessionIdempotencyService,
     @Optional()
     private readonly analyticsEventService?: AnalyticsEventService,
+    @Optional()
+    private readonly searchOutboxService?: SearchIndexOutboxService,
+    @Optional()
+    private readonly topicService?: TopicService,
   ) {}
 
   private get aesKey(): string {
     return this.configService.get<string>('app.confessionAesKey', '');
+  }
+
+  private assertArchivedRecordAccess(actor?: ArchiveActor): void {
+    if (!actor) {
+      throw new ForbiddenException(
+        'Archived record access requires an explicit actor context',
+      );
+    }
+
+    const role = String(actor.role ?? actor.type ?? '').toLowerCase();
+    if (role !== 'admin' && role !== 'system') {
+      throw new ForbiddenException(
+        'Only administrators may access or restore archived records',
+      );
+    }
+  }
+
+  private redactArchivedRecord<T extends Record<string, any>>(record: T): T {
+    const redacted = { ...record };
+
+    if (typeof redacted.message === 'string') {
+      redacted.message = '[REDACTED: Archived record]';
+    }
+    if (typeof redacted.content === 'string') {
+      redacted.content = '[REDACTED: Archived record]';
+    }
+    if (typeof redacted.replyContent === 'string') {
+      redacted.replyContent = '[REDACTED: Archived record]';
+    }
+
+    return redacted;
   }
 
   private sanitizeMessage(message: string): string {
@@ -213,6 +261,9 @@ export class ConfessionService {
         requiresReview: moderationResult.requiresReview,
         isHidden: moderationResult.status === ModerationStatus.REJECTED,
         moderationDetails: moderationResult.details,
+        seriesHandle: dto.seriesHandle
+          ? dto.seriesHandle.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 64)
+          : null,
         ...stellarData,
         ...(dto.idempotencyKey ? { idempotencyKey: dto.idempotencyKey } : {}),
       });
@@ -358,7 +409,7 @@ export class ConfessionService {
     }
   }
 
-  async getConfessions(dto: GetConfessionsDto) {
+  async getConfessions(dto: GetConfessionsDto, requestingUserId?: number) {
     const limit = dto.limit ?? 10;
     const sort = dto.sort || SortOrder.NEWEST;
 
@@ -367,6 +418,24 @@ export class ConfessionService {
       dto.cursor,
     );
 
+    let blockedUserIds: number[] = [];
+    let mutedUserIds: number[] = [];
+    if (requestingUserId) {
+      try {
+        const requestingUser = await this.confessionRepo.manager
+          .getRepository(User)
+          .findOne({ where: { id: requestingUserId } });
+        if (requestingUser) {
+          blockedUserIds = requestingUser.getBlockedUserIds();
+          mutedUserIds = requestingUser.getMutedUserIds();
+        }
+      } catch (e) {
+        // Fallback gracefully
+      }
+    }
+
+    const excludedUserIds = Array.from(new Set([...blockedUserIds, ...mutedUserIds]));
+
     const cacheKey = this.cacheService.buildKey(
       'confessions',
       dto.cursor || 'no-cursor',
@@ -374,6 +443,7 @@ export class ConfessionService {
       limit,
       dto.gender || 'all',
       dto.sort || 'recent',
+      requestingUserId ? `user:${requestingUserId}` : 'anon',
     );
 
     const cached = await this.cacheService.get<any>(cacheKey);
@@ -413,8 +483,19 @@ export class ConfessionService {
               "linked_user.privacy_settings->>'isDiscoverable' IS DISTINCT FROM 'false'",
             );
         }),
-      )
-      .leftJoinAndSelect('confession.reactions', 'reactions')
+      );
+
+    if (excludedUserIds.length > 0) {
+      qb.andWhere(
+        new Brackets((sub) => {
+          sub
+            .where('userLinks.id IS NULL')
+            .orWhere('linked_user.id NOT IN (:...excludedUserIds)', { excludedUserIds });
+        }),
+      );
+    }
+
+    qb.leftJoinAndSelect('confession.reactions', 'reactions')
       .select([
         'confession.id',
         'confession.message',
@@ -557,18 +638,101 @@ export class ConfessionService {
       where: { id, isDeleted: false },
     });
     if (!existing) throw new NotFoundException(`Confession ${id} not found`);
-    await this.confessionRepo.update(id, {
-      isDeleted: true,
-      deletedAt: new Date(),
-      deletedBy: deletedBy || null,
+
+    await this.confessionRepo.manager.transaction(async (manager) => {
+      await manager.update(AnonymousConfession, id, {
+        isDeleted: true,
+        deletedAt: new Date(),
+        deletedBy: deletedBy || null,
+      });
+
+      if (this.searchOutboxService) {
+        await this.searchOutboxService.enqueueIndexChange(
+          manager,
+          'CONFESSION',
+          id,
+          SearchOutboxAction.INDEX_DELETE,
+          { confessionId: id, deletedAt: new Date() },
+        );
+      }
     });
+
     return { message: 'Confession soft-deleted', id };
+  }
+
+  /**
+   * Transactionally update confession topics and enqueue search index synchronization.
+   */
+  async updateConfessionTopics(id: string, topics: string[], userId?: number) {
+    const existing = await this.confessionRepo.findOne({
+      where: { id, isDeleted: false },
+      relations: ['confessionTags', 'confessionTags.tag'],
+    });
+    if (!existing) {
+      throw new NotFoundException(`Confession ${id} not found`);
+    }
+
+    const normalizedTopics: string[] = [];
+    for (const rawTopic of topics) {
+      if (this.topicService) {
+        const canonical = await this.topicService.resolveTopic(rawTopic);
+        this.topicService.assertTopicAssignable(canonical);
+        normalizedTopics.push(canonical.slug);
+      } else {
+        const norm = rawTopic.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-');
+        if (norm) normalizedTopics.push(norm);
+      }
+    }
+
+    // Run atomically inside transaction
+    await this.confessionRepo.manager.transaction(async (manager) => {
+      // Clear existing tags
+      await manager.delete(ConfessionTag, { confession: { id } });
+
+      // Create or associate tags/topics
+      for (const tName of normalizedTopics) {
+        let tag = await manager.findOne(Tag, { where: { name: tName } });
+        if (!tag) {
+          tag = await manager.save(Tag, manager.create(Tag, { name: tName }));
+        }
+        await manager.save(
+          ConfessionTag,
+          manager.create(ConfessionTag, {
+            confession: existing,
+            tag,
+          }),
+        );
+      }
+
+      // Enqueue search outbox entry in the same transaction
+      if (this.searchOutboxService) {
+        await this.searchOutboxService.enqueueIndexChange(
+          manager,
+          'CONFESSION',
+          id,
+          SearchOutboxAction.TOPIC_SYNC,
+          {
+            confessionId: id,
+            topics: normalizedTopics,
+            updatedAt: new Date(),
+          },
+        );
+      }
+    });
+
+    return {
+      message: 'Confession topics updated and search sync enqueued',
+      confessionId: id,
+      topics: normalizedTopics,
+    };
   }
 
   /**
    * Restore a soft-deleted confession (admin only).
    */
-  async restore(id: string) {
+  async restore(id: string, actor?: ArchiveActor) {
+    this.assertArchivedRecordAccess(actor);
+
     const existing = await this.confessionRepo.findOne({
       where: { id, isDeleted: true },
     });
@@ -585,7 +749,9 @@ export class ConfessionService {
   /**
    * List soft-deleted confessions for admin review.
    */
-  async getDeletedConfessions(page = 1, limit = 50) {
+  async getDeletedConfessions(page = 1, limit = 50, actor?: ArchiveActor) {
+    this.assertArchivedRecordAccess(actor);
+
     const skip = (page - 1) * limit;
     const [data, total] = await this.confessionRepo.findAndCount({
       where: { isDeleted: true },
@@ -595,7 +761,7 @@ export class ConfessionService {
     });
 
     return {
-      data: data.map((c) => ({
+      data: data.map((c) => this.redactArchivedRecord({
         ...c,
         message: decryptConfession(c.message, this.aesKey),
       })),
@@ -751,6 +917,70 @@ export class ConfessionService {
         searchType: 'fulltext',
       },
     };
+  }
+
+  private async requireConfessionOwner(
+    confessionId: string,
+    userId: number,
+  ): Promise<AnonymousConfession> {
+    const confession = await this.confessionRepo
+      .createQueryBuilder('confession')
+      .innerJoin('confession.anonymousUser', 'anonymousUser')
+      .innerJoin('anonymousUser.userLinks', 'link')
+      .where('confession.id = :confessionId', { confessionId })
+      .andWhere('link.userId = :userId', { userId })
+      .getOne();
+    if (!confession) throw new ForbiddenException('Not authorized');
+    return confession;
+  }
+
+  async createShareLink(confessionId: string, userId: number) {
+    await this.requireConfessionOwner(confessionId, userId);
+    const token = randomBytes(32).toString('base64url');
+    await this.confessionRepo.update(
+      { id: confessionId },
+      { shareToken: token, shareRevoked: false },
+    );
+    return { shareToken: token, sharePath: `/shared/confessions/${token}` };
+  }
+
+  async revokeShareLink(confessionId: string, userId: number) {
+    await this.requireConfessionOwner(confessionId, userId);
+    await this.confessionRepo.update(
+      { id: confessionId },
+      { shareRevoked: true },
+    );
+    return { revoked: true };
+  }
+
+  async getByShareToken(token: string) {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(token)) {
+      throw new BadRequestException('Invalid share token');
+    }
+    const confession = await this.confessionRepo.findOne({
+      where: { shareToken: token, shareRevoked: false, isDeleted: false, isHidden: false },
+    });
+    if (!confession) throw new NotFoundException('Share link not found or revoked');
+    return {
+      id: confession.id,
+      message: safeDecryptConfession(confession.message, this.aesKey),
+      created_at: confession.created_at,
+      seriesHandle: confession.seriesHandle,
+    };
+  }
+
+  async getSeries(handle: string) {
+    const normalized = handle.trim().toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 64);
+    if (!normalized) throw new BadRequestException('Invalid series handle');
+    const confessions = await this.confessionRepo.find({
+      where: { seriesHandle: normalized, isDeleted: false, isHidden: false },
+      order: { created_at: 'ASC' },
+    });
+    return confessions.map((confession) => ({
+      id: confession.id,
+      message: safeDecryptConfession(confession.message, this.aesKey),
+      created_at: confession.created_at,
+    }));
   }
 
   async getConfessionByIdWithViewCount(id: string, req: Request) {

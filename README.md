@@ -360,6 +360,7 @@ When adding a new API endpoint, follow the [API endpoint contributor checklist](
 ## Documentation
 
 - [Account Recovery Guide](docs/account-recovery.md) — What to do if you connect the wrong wallet or network
+- [Account Settings Recovery](docs/account-settings-recovery.md) — Per-step persistence, retry semantics, and draft recovery for the multi-step account settings flow
 - [Contributor Guide](docs/CONTRIBUTOR_GUIDE.md) — Local setup, branch hygiene, PR expectations, and validation commands
 
 ## Package Docs
@@ -387,3 +388,12 @@ When adding a new API endpoint, follow the [API endpoint contributor checklist](
 
 <!-- handsoff-issue-242 -->
 - #242: [Advanced] Separate reporter identity from evidence access permissions
+
+<!-- handsoff-issue-350 -->
+- #350: [Advanced] Save and restore feed reading position across devices
+
+<!-- handsoff-issue-352 -->
+- #352: [Advanced] Offer reusable feed-filter presets with user-controlled names
+
+<!-- handsoff-issue-357 -->
+- #357: [Advanced] Add reader-side controls for sensitive-content categories

@@ -32,8 +32,6 @@ COMPAT_REPORT_FILE="${XCONFESS_COMPAT_REPORT_FILE:-$REPO_ROOT/deployments/contra
 # storage layout that has not been signed off by the migration owner.
 RELEASE_AUTHORIZATION_ENV="${XCONFESS_RELEASE_AUTHORIZATION:-}"
 REQUIRED_AUTHORIZATION_TOKEN="${XCONFESS_REQUIRED_AUTHORIZATION_TOKEN:-storage-migration-approved}"
-=======
-
 timestamp_utc() {
   date -u +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -302,6 +300,24 @@ deploy_all() {
   local source_key="$2"
   local dry_run="$3"
   local force="$4"
+  local report_output="$5"
+
+  if [[ "$dry_run" == "true" ]]; then
+    local node_bin
+    node_bin="$(resolve_cmd node)" || {
+      echo "Missing required command: node" >&2
+      exit 1
+    }
+    local report_script="$REPO_ROOT/scripts/contract-release-dry-run.js"
+    [[ -f "$report_script" ]] || {
+      echo "Missing contract release dry-run report generator: $report_script" >&2
+      exit 1
+    }
+    local report_args=(--network "$network")
+    [[ -n "$report_output" ]] && report_args+=(--output "$report_output")
+    "$node_bin" "$report_script" "${report_args[@]}"
+    return
+  fi
 
   local stellar_bin
   stellar_bin="$(resolve_cmd stellar)" || {
@@ -312,21 +328,10 @@ deploy_all() {
   verify_only
 
   local output_file="$REPO_ROOT/deployments/${network}.json"
-  if [[ "$dry_run" != "true" && ! -f "$output_file" && "$force" != "true" ]]; then
+  if [[ ! -f "$output_file" && "$force" != "true" ]]; then
     echo "Rollback guard: no previous deployment metadata found for network '$network'." >&2
     echo "If this is an intentional first-time deployment, re-run with --force to proceed." >&2
     exit 1
-  fi
-
-  if [[ "$dry_run" == "true" ]]; then
-    if [[ ! -f "$output_file" ]]; then
-      echo "Dry-run mode enabled. Build artifacts are verified, but no prior deployment metadata was found for network '$network'."
-      echo "If this is the first deployment, the actual run requires --force to bypass rollback safety."
-    else
-      echo "Dry-run mode enabled. Build artifacts are verified and deployment metadata path is: $output_file"
-    fi
-    echo "No contracts were deployed. To execute the deployment, rerun without --dry-run."
-    return 0
   fi
 
   local generated_at
@@ -410,19 +415,22 @@ Usage:
   ./scripts/contracts-release.sh build
   ./scripts/contracts-release.sh verify
   ./scripts/contracts-release.sh deploy --network <network> --source <stellar-key-name> [--dry-run] [--force]
+  ./scripts/contracts-release.sh deploy --network <network> --dry-run [--output <report.json>]
 
 Commands:
   rehearse  Run the storage migration rehearsal and rollback-constraint checks only
   build     Rehearse migration, generate the compatibility report, then build and manifest
   verify    Rehearse migration, generate the compatibility report, then verify artifacts
   deploy    Rehearse migration, generate the compatibility report, then deploy
+            Add --dry-run to write a non-mutating release plan without deployment
 
 Every command requires explicit authorization via XCONFESS_RELEASE_AUTHORIZATION
 (must equal XCONFESS_REQUIRED_AUTHORIZATION_TOKEN, default "storage-migration-approved").
 Release is blocked when the compatibility report lists blocking conditions.
 
 Options:
-  --dry-run  Verify build artifacts and deployment readiness without deploying contracts
+  --dry-run  Write a read-only release plan; does not build, authorize, or deploy
+  --output   Select the dry-run JSON report path (only used with --dry-run)
   --force    Allow deploy to proceed even when no prior deployment metadata exists
 EOF
 }
@@ -450,6 +458,7 @@ main() {
       local source_key=""
       local dry_run="false"
       local force="false"
+      local report_output=""
       while [[ $# -gt 0 ]]; do
         case "$1" in
           --network)
@@ -464,6 +473,14 @@ main() {
             dry_run="true"
             shift
             ;;
+          --output)
+            report_output="${2:-}"
+            if [[ -z "$report_output" || "$report_output" == --* ]]; then
+              echo "--output requires a report file path" >&2
+              exit 1
+            fi
+            shift 2
+            ;;
           --force)
             force="true"
             shift
@@ -475,12 +492,24 @@ main() {
             ;;
         esac
       done
-      if [[ -z "$network" || -z "$source_key" ]]; then
-        echo "deploy requires --network and --source" >&2
+      if [[ -z "$network" || ( "$dry_run" != "true" && -z "$source_key" ) ]]; then
+        if [[ "$dry_run" == "true" ]]; then
+          echo "deploy --dry-run requires --network" >&2
+        else
+          echo "deploy requires --network and --source" >&2
+        fi
         print_help
         exit 1
       fi
-      deploy_all "$network" "$source_key" "$dry_run" "$force"
+      if [[ "$dry_run" == "true" && "$force" == "true" ]]; then
+        echo "--force cannot be used with --dry-run" >&2
+        exit 1
+      fi
+      if [[ "$dry_run" != "true" && -n "$report_output" ]]; then
+        echo "--output can only be used with --dry-run" >&2
+        exit 1
+      fi
+      deploy_all "$network" "$source_key" "$dry_run" "$force" "$report_output"
       ;;
     -h|--help|help|"")
       print_help

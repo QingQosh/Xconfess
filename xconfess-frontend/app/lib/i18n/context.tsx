@@ -6,6 +6,7 @@ import React, {
   useState,
   useCallback,
   useMemo,
+  useEffect,
   ReactNode,
 } from 'react';
 import {
@@ -13,16 +14,19 @@ import {
   MessageKey,
   MessageCatalog,
   DEFAULT_LOCALE,
+  RTL_LOCALES,
   SUPPORTED_LOCALES,
 } from './types';
 import { en } from './locales/en';
 import { es } from './locales/es';
+import { ar } from './locales/ar';
 
 const CATALOGS: Record<SupportedLocale, MessageCatalog> = {
   en,
   es,
   fr: en, // Fallback to English for languages without full translations
   de: en,
+  ar,
 };
 
 export interface I18nContextValue {
@@ -43,19 +47,23 @@ export function I18nProvider({
   children: ReactNode;
   initialLocale?: SupportedLocale;
 }) {
-  const [locale, setLocaleState] = useState<SupportedLocale>(() => {
-    if (typeof window !== 'undefined') {
-      try {
-        const stored = localStorage.getItem(STORAGE_KEY) as SupportedLocale;
-        if (stored && SUPPORTED_LOCALES.includes(stored)) {
-          return stored;
-        }
-      } catch {
-        // Storage access error fallback
+  const [locale, setLocaleState] = useState<SupportedLocale>(initialLocale);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY) as SupportedLocale;
+      if (stored && SUPPORTED_LOCALES.includes(stored)) {
+        setLocaleState(stored);
       }
+    } catch {
+      // Storage access error fallback
     }
-    return initialLocale;
-  });
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.documentElement.dir = RTL_LOCALES.includes(locale) ? 'rtl' : 'ltr';
+  }, [locale]);
 
   const setLocale = useCallback((newLocale: SupportedLocale) => {
     if (SUPPORTED_LOCALES.includes(newLocale)) {

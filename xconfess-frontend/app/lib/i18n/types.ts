@@ -1,6 +1,7 @@
-export type SupportedLocale = 'en' | 'es' | 'fr' | 'de';
+export type SupportedLocale = 'en' | 'es' | 'fr' | 'de' | 'ar';
 
-export const SUPPORTED_LOCALES: SupportedLocale[] = ['en', 'es', 'fr', 'de'];
+export const SUPPORTED_LOCALES: SupportedLocale[] = ['en', 'es', 'fr', 'de', 'ar'];
+export const RTL_LOCALES: SupportedLocale[] = ['ar'];
 export const DEFAULT_LOCALE: SupportedLocale = 'en';
 
 export const REQUIRED_MESSAGE_KEYS = [

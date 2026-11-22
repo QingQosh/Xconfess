@@ -226,5 +226,28 @@ describe('SearchDiscoveryService - Non-Personalized Mode', () => {
 
       expect(result.personalized).toBe(true);
     });
+
+    it('aggregates public topic facets derived only from visible approved records and invalidates on moderation', async () => {
+      const querySpy = jest.spyOn((service as any).savedSearchRepo.manager, 'query').mockResolvedValueOnce([
+        { topic: 'mental-health', count: 12 },
+        { topic: 'career', count: 8 },
+      ]);
+
+      const facets = await service.getPublicTopicFacets(10);
+      expect(facets).toHaveLength(2);
+      expect(facets[0].topic).toBe('mental-health');
+      expect(facets[0].count).toBe(12);
+
+      // Verify cached
+      const cached = await service.getPublicTopicFacets(10);
+      expect(querySpy).toHaveBeenCalledTimes(1);
+
+      // Verify invalidation on lifecycle event
+      service.handleConfessionLifecycleChange();
+      querySpy.mockResolvedValueOnce([{ topic: 'mental-health', count: 13 }]);
+      const fresh = await service.getPublicTopicFacets(10);
+      expect(querySpy).toHaveBeenCalledTimes(2);
+      expect(fresh[0].count).toBe(13);
+    });
   });
 });

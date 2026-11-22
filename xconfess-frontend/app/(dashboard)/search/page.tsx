@@ -6,6 +6,7 @@ import { SearchInput } from "@/app/components/search/SearchInput";
 import { FilterSidebar } from "@/app/components/search/FilterSidebar";
 import { FilterChips } from "@/app/components/search/FilterChips";
 import { SearchResults } from "@/app/components/search/SearchResults";
+import { TopicInclusionRulesPanel } from "@/app/components/analytics/TopicInclusionRulesPanel";
 import ErrorState from "@/app/components/common/ErrorState";
 import { useDebounce } from "@/app/lib/hooks/useDebounce";
 import { useSearch } from "@/app/lib/hooks/useSearch";
@@ -208,6 +209,8 @@ export default function SearchPage() {
           onClearAll={handleClearAll}
           statusChip={effectiveStatusMeta?.degraded ? { label: "Partial results", tone: "warning" } : null}
         />
+
+        <TopicInclusionRulesPanel activeTopicQuery={query} />
 
         <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_18rem]">
           <div className="min-w-0 space-y-4">

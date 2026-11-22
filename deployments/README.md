@@ -14,6 +14,9 @@ and network deployments.
   `deployments/testnet.json` or `deployments/public.json`.
 - `sample.redacted.json` is an example only. It documents the expected shape
   without real contract IDs or deployer information.
+- `rollback-evidence/<network>.json` is the rollback evidence archive for
+  application and schema rollback drills. See
+  [Rollback Evidence Archive](#rollback-evidence-archive).
 
 ## Naming Convention
 
@@ -72,6 +75,89 @@ Consumers (backend services, frontend builds, CI preflight) must reject any
 manifest that fails verification rather than falling back to unverified
 contract IDs.
 
+## Rollback Evidence Archive
+
+Rollback drills for both application deploys and schema migrations must leave
+an auditable record at the owning release boundary. Evidence is written to
+`deployments/rollback-evidence/<network>.json` and is consumed by the release
+compatibility check (`npm run check:release-compatibility`) and the artifact
+secret scan (`npm run secret-scan:artifacts`).
+
+### Record Shape
+
+Each archive file is a JSON object:
+
+```json
+{
+  "network": "testnet",
+  "environment": "staging",
+  "retention_days": 90,
+  "drills": [
+    {
+      "id": "app-rollback-2024-06-01",
+      "kind": "application",
+      "started_at": "2024-06-01T10:00:00Z",
+      "duration_seconds": 420,
+      "inputs": { "from_version": "1.4.2", "to_version": "1.4.1" },
+      "decision_points": [
+        { "at": "2024-06-01T10:02:00Z", "decision": "proceed", "reason": "health checks green" }
+      ],
+      "outcome": "success",
+      "notes": "rolled back to previous release"
+    },
+    {
+      "id": "schema-rollback-2024-06-02",
+      "kind": "schema",
+      "started_at": "2024-06-02T09:00:00Z",
+      "duration_seconds": 610,
+      "inputs": { "migration": "20240602_add_index", "direction": "down" },
+      "decision_points": [
+        { "at": "2024-06-02T09:05:00Z", "decision": "abort", "reason": "lock contention" }
+      ],
+      "outcome": "failed",
+      "retry_of": "schema-rollback-2024-06-01",
+      "notes": "retried after clearing locks"
+    }
+  ]
+}
+```
+
+### Sanitization
+
+Drill inputs and decision points must be sanitized before archiving. Do not
+store raw secrets, tokens, connection strings, or unsanitized request/response
+payloads. Only record the fields needed to reconstruct the decision trail
+(versions, migration names, direction, timestamps, and short reasons). The
+`secret-scan:artifacts` check fails the release if a committed evidence file
+contains credential-shaped values.
+
+### Retention
+
+`retention_days` is required and must be a positive integer. Evidence older
+than `retention_days` (measured from `started_at`) is pruned by the release
+compatibility check; archives that exceed retention without pruning fail
+`check:release-compatibility`. Production archives must use a retention of at
+least 90 days.
+
+### Access Controls
+
+- Writing evidence requires the release/deploy role; the archive is not
+  writable by application runtime credentials.
+- Reading evidence is limited to release engineers and on-call responders.
+- Evidence files are committed only for shared environments; local drill
+  records stay out of the repository.
+
+### Success, Validation, and Failure Semantics
+
+- **Success**: a drill record with `outcome: "success"` and at least one
+  decision point is accepted and retained.
+- **Validation**: records missing `id`, `kind` (`application` or `schema`),
+  `started_at`, `duration_seconds`, `outcome`, or `retention_days` are
+  rejected by `check:release-compatibility`.
+- **Failure/retry**: a drill with `outcome: "failed"` must include a `retry_of`
+  reference to the prior attempt (or `null` for the first attempt) so retries
+  are traceable. Failed drills are retained like successful ones.
+
 ## What To Commit
 
 Commit:
@@ -79,6 +165,8 @@ Commit:
 - reviewed `deployments/<network>.json` files for shared environments
 - `deployments/contract-wasm-manifest.json` when publishing a release artifact
   snapshot for review
+- sanitized `deployments/rollback-evidence/<network>.json` archives for shared
+  environments
 - documentation examples such as `sample.redacted.json`
 
 Do not commit:
@@ -87,6 +175,7 @@ Do not commit:
 - one-off local deployment records from personal experiments
 - generated build directories such as `xconfess-contracts/target/`
 - unreviewed metadata where hash changes cannot be traced to source changes
+- unsanitized rollback evidence containing secrets or raw payloads
 
 Before committing a deployment file, verify the hashes with the checksum
 workflow in `docs/contract-release-and-upgrade-runbook.md`.

@@ -127,13 +127,17 @@ describe("EnhancedConfessionForm Accessibility Regression Suite (#1795)", () => 
 
       const previewToggle = screen.getByRole("button", { name: /switch to preview mode/i });
       expect(previewToggle).toBeInTheDocument();
+      expect(previewToggle).toHaveAttribute("aria-pressed", "false");
 
       await user.click(previewToggle);
 
-      expect(
-        screen.getByRole("button", { name: /switch to edit mode/i }),
-      ).toBeInTheDocument();
+      const editToggle = screen.getByRole("button", { name: /switch to edit mode/i });
+      expect(editToggle).toBeInTheDocument();
+      expect(editToggle).toHaveAttribute("aria-pressed", "true");
       expect(screen.getByRole("region", { name: /confession preview/i })).toBeInTheDocument();
+      expect(
+        screen.getByText(/Anonymous Post Preview — Your username and account metadata are never attached/i),
+      ).toBeInTheDocument();
     });
   });
 

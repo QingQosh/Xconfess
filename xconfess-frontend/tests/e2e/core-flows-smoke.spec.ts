@@ -1,7 +1,7 @@
 /**
  * core-flows-smoke.spec.ts
  *
- * Smoke suite covering the five core user journeys required for pre-release
+ * Smoke suite covering the core user journeys required for pre-release
  * signal. Uses seeded local data (scripts/seed.ts).
  *
  * Flows:
@@ -10,6 +10,7 @@
  *   3. Comment on confession
  *   4. Reaction on confession
  *   5. Report a confession
+ *   6. Account settings
  *
  * Failures include requestId (from response body) and the route URL.
  * All five flows are "critical" — the test file exits non-zero if any fail
@@ -204,6 +205,27 @@ async function setupCoreFlowMocks(page: Page) {
       body: JSON.stringify({ totalConfessions: 1, totalReactions: 0, badges: [] }),
     });
   });
+
+  await page.route("**/api/users/privacy-settings", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        isDiscoverable: true,
+        canReceiveReplies: true,
+        showReactions: true,
+        dataProcessingConsent: false,
+      }),
+    });
+  });
+
+  await page.route("**/api/users/notification-preferences", async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({}),
+    });
+  });
 }
 
 // ── Flow 1: Login / Session ───────────────────────────────────────────────────
@@ -379,5 +401,21 @@ test.describe("Flow 5 — Report", () => {
     await expect(successFeedback, {
       message: `Report confirmation must appear [route: /reports (POST)]`,
     }).toBeVisible({ timeout: 8000 });
+  });
+
+  test.describe("Flow 6 — Account settings", () => {
+    test("authenticated user can reach account settings", async ({ page }) => {
+      await setupCoreFlowMocks(page);
+      await page.goto("/login");
+      await page.getByLabel("Email").fill(SEED_USER.email);
+      await page.getByLabel("Password").fill(SEED_USER.password);
+      await page.getByRole("button", { name: "Sign in" }).click();
+      await expect(page).not.toHaveURL("/login", { timeout: 8000 });
+
+      await page.goto("/settings/account");
+      await expect(
+        page.getByRole("heading", { name: "Account Settings" }),
+      ).toBeVisible();
+    });
   });
 });

@@ -15,28 +15,46 @@ import { DataSource } from 'typeorm';
 // ==========================================
 export class DeterministicClock {
   private currentTime: number;
-  private originalDateNow: () => number;
   private originalDate: typeof Date;
-  private isFrozen: boolean = false;
+  private isFrozen = false;
 
   constructor(initialIsoString: string = '2026-09-24T00:00:00.000Z') {
-    this.currentTime = new Date(initialIsoString).getTime();
+    this.currentTime = this.parseTime(initialIsoString);
   }
 
   freeze(isoString?: string): void {
     if (isoString) {
-      this.currentTime = new Date(isoString).getTime();
+      this.currentTime = this.parseTime(isoString);
     }
     if (!this.isFrozen) {
-      this.originalDateNow = Date.now;
       this.originalDate = global.Date;
-
-      Date.now = () => this.currentTime;
+      const clock = this;
+      global.Date = new Proxy(this.originalDate, {
+        apply(target) {
+          return new target(clock.currentTime).toString();
+        },
+        construct(target, args, newTarget) {
+          return Reflect.construct(
+            target,
+            args.length === 0 ? [clock.currentTime] : args,
+            newTarget,
+          );
+        },
+        get(target, property, receiver) {
+          if (property === 'now') return () => clock.currentTime;
+          return Reflect.get(target, property, receiver);
+        },
+      });
       this.isFrozen = true;
     }
   }
 
   advance(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) {
+      throw new RangeError(
+        'Clock advance must be a non-negative finite number',
+      );
+    }
     this.currentTime += ms;
   }
 
@@ -50,9 +68,17 @@ export class DeterministicClock {
 
   restore(): void {
     if (this.isFrozen) {
-      Date.now = this.originalDateNow;
+      global.Date = this.originalDate;
       this.isFrozen = false;
     }
+  }
+
+  private parseTime(isoString: string): number {
+    const time = new Date(isoString).getTime();
+    if (!Number.isFinite(time)) {
+      throw new RangeError(`Invalid deterministic clock time: ${isoString}`);
+    }
+    return time;
   }
 }
 
@@ -139,7 +165,9 @@ export interface QueueJob<T = any> {
   data: T;
   attempts: number;
   maxAttempts: number;
-  status: 'waiting' | 'active' | 'completed' | 'failed' | 'dlq';
+  status: 'waiting' | 'delayed' | 'active' | 'completed' | 'failed' | 'dlq';
+  availableAt: number;
+  backoff?: { type: 'fixed' | 'exponential'; delay: number };
   error?: string;
 }
 
@@ -148,39 +176,101 @@ export class MockQueueFixture {
   private dlq: QueueJob[] = [];
   private jobCounter: number = 0;
 
-  async add<T>(name: string, data: T, opts: { attempts?: number } = {}): Promise<QueueJob<T>> {
+  async add<T>(
+    name: string,
+    data: T,
+    opts: {
+      attempts?: number;
+      delay?: number;
+      backoff?: { type: 'fixed' | 'exponential'; delay: number };
+    } = {},
+  ): Promise<QueueJob<T>> {
+    const attempts = opts.attempts ?? 3;
+    const delay = opts.delay ?? 0;
+    if (!Number.isInteger(attempts) || attempts < 1) {
+      throw new RangeError('Job attempts must be a positive integer');
+    }
+    if (!Number.isFinite(delay) || delay < 0) {
+      throw new RangeError('Job delay must be a non-negative finite number');
+    }
+    if (
+      opts.backoff &&
+      (!Number.isFinite(opts.backoff.delay) ||
+        opts.backoff.delay < 0 ||
+        !['fixed', 'exponential'].includes(opts.backoff.type))
+    ) {
+      throw new RangeError(
+        'Job backoff must have a supported type and valid delay',
+      );
+    }
+
     this.jobCounter++;
+    const availableAt = Date.now() + delay;
     const job: QueueJob<T> = {
       id: `job-${this.jobCounter}`,
       name,
       data,
       attempts: 0,
-      maxAttempts: opts.attempts ?? 3,
-      status: 'waiting',
+      maxAttempts: attempts,
+      availableAt,
+      backoff: opts.backoff,
+      status: delay > 0 ? 'delayed' : 'waiting',
     };
     this.jobs.set(job.id, job);
     return job;
   }
 
-  async processSync(handler: (job: QueueJob) => Promise<void>): Promise<void> {
-    for (const job of this.jobs.values()) {
-      if (job.status === 'waiting' || job.status === 'failed') {
+  async processSync(
+    handler: (job: QueueJob) => Promise<void>,
+    options: { concurrency?: number } = {},
+  ): Promise<void> {
+    const concurrency = options.concurrency ?? 1;
+    if (!Number.isInteger(concurrency) || concurrency < 1) {
+      throw new RangeError('Worker concurrency must be a positive integer');
+    }
+
+    const readyJobs = Array.from(this.jobs.values()).filter(
+      (job) =>
+        (job.status === 'waiting' ||
+          job.status === 'failed' ||
+          job.status === 'delayed') &&
+        job.availableAt <= Date.now(),
+    );
+    let nextJobIndex = 0;
+
+    const worker = async (): Promise<void> => {
+      while (nextJobIndex < readyJobs.length) {
+        const job = readyJobs[nextJobIndex++];
         job.status = 'active';
         job.attempts++;
         try {
           await handler(job);
           job.status = 'completed';
-        } catch (err: any) {
-          job.error = err.message;
+        } catch (err: unknown) {
+          job.error = err instanceof Error ? err.message : String(err);
           if (job.attempts >= job.maxAttempts) {
             job.status = 'dlq';
             this.dlq.push(job);
           } else {
-            job.status = 'failed';
+            const delay = this.getRetryDelay(job);
+            job.availableAt = Date.now() + delay;
+            job.status = delay > 0 ? 'delayed' : 'failed';
           }
         }
       }
-    }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(concurrency, readyJobs.length) }, () =>
+        worker(),
+      ),
+    );
+  }
+
+  private getRetryDelay(job: QueueJob): number {
+    if (!job.backoff) return 0;
+    if (job.backoff.type === 'fixed') return job.backoff.delay;
+    return job.backoff.delay * 2 ** (job.attempts - 1);
   }
 
   getDlq(): QueueJob[] {
@@ -198,7 +288,13 @@ export class MockQueueFixture {
   }
 
   assertNoLeakedJobs(): void {
-    const pending = Array.from(this.jobs.values()).filter((j) => j.status === 'waiting' || j.status === 'active');
+    const pending = Array.from(this.jobs.values()).filter(
+      (j) =>
+        j.status === 'waiting' ||
+        j.status === 'delayed' ||
+        j.status === 'active' ||
+        j.status === 'failed',
+    );
     if (pending.length > 0) {
       throw new Error(`State leak detected in Queue: ${pending.length} jobs remained unprocessed (${pending.map((j) => j.id).join(', ')})`);
     }

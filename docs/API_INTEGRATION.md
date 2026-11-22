@@ -264,145 +264,82 @@ Cancellation is only accepted while the job is in `confirmed` or
 
 Deletion requests are idempotent: repeating `POST /api/account/deletion` while a
 job is active returns the existing job rather than creating a new one. Every
-state transition is recorded with a timestamp so the user-facing status is
-always accurate.
+state transition is recorded with a timestamp so the user-facing status and
+operator audit trail stay consistent.
 
-### Anonymization and legal retention
+## Rollback evidence archive
 
-Records that must be retained for legal or financial reasons (for example,
-settled tips and audit logs) are **de-identified** rather than deleted: direct
-identifiers are replaced with a stable pseudonym and the original values are
-discarded. Each retained category is reported in `retainedRecords` with a
-`reason` and `anonymized: true` so the retention is justified and auditable.
+Application and schema rollback drills produce an evidence record at the owning
+release boundary. The archive stores sanitized drill inputs, decision points,
+duration, and outcomes so a drill can be reviewed and audited after the fact.
 
-## Public endpoint reference
+### What is archived
 
-### Create confession
+Each evidence record captures:
 
-`POST /api/confessions`
+- `drillId` — stable identifier for the drill run.
+- `kind` — `application` or `schema`.
+- `inputs` — sanitized drill inputs (secrets, tokens, and raw payloads are redacted before storage).
+- `decisionPoints` — ordered list of `{ at, decision, rationale }` entries recorded during the drill.
+- `durationMs` — wall-clock duration of the drill.
+- `outcome` — `succeeded`, `failed`, or `aborted`.
+- `createdAt` / `expiresAt` — retention window boundaries.
 
-Request body:
+Raw secrets, credentials, and unsanitized request/response bodies are never
+stored. Inputs are sanitized at write time; if sanitization fails the record is
+rejected rather than persisted.
 
-```json
-{
-  "message": "I finally took a break and it helped.",
-  "gender": "other",
-  "tags": ["wellbeing", "work"],
-  "stellarTxHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-}
-```
+### Endpoints
 
-Response example:
+- `POST /api/release/rollback-evidence` — archive a drill evidence record
+- `GET /api/release/rollback-evidence` — list archived records (paginated)
+- `GET /api/release/rollback-evidence/:drillId` — fetch a single record
 
-```json
-{
-  "id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-  "message": "I finally took a break and it helped.",
-  "gender": "other",
-  "tags": ["wellbeing", "work"],
-  "view_count": 0,
-  "created_at": "2026-04-25T10:00:00.000Z"
-}
-```
+All endpoints require `Authorization: Bearer <access_token>` with an operator
+role. Requests without a valid token return `401 Unauthorized`; authenticated
+users without the operator role receive `403 Forbidden`.
 
-### List confessions
+### Archive a record
 
-`GET /api/confessions`
-
-Query parameters:
-
-- `page` (optional)
-- `limit` (optional)
-
-Response shape:
+`POST /api/release/rollback-evidence`
 
 ```json
 {
-  "data": [ /* confession objects */ ],
-  "total": 1,
-  "page": 1,
-  "limit": 20
+  "drillId": "drill_2026_04_25_app",
+  "kind": "application",
+  "inputs": { "targetVersion": "v1.8.0", "previousVersion": "v1.7.3" },
+  "decisionPoints": [
+    { "at": "2026-04-25T10:01:00.000Z", "decision": "proceed", "rationale": "health checks green" }
+  ],
+  "durationMs": 42000,
+  "outcome": "succeeded"
 }
 ```
 
-### Search confessions
-
-`GET /api/confessions/search`
-
-Search parameters are validated and allow hybrid query behavior.
-
-### Full-text search
-
-`GET /api/confessions/search/fulltext`
-
-Same query shape as `/confessions/search` but performs a full-text search over confession content.
-
-### Trending confessions
-
-`GET /api/confessions/trending/top`
-
-Returns the current top trending confessions.
-
-### Tags
-
-- `GET /api/confessions/tags` — list all available tags
-- `GET /api/confessions/tags/:tag` — list confessions for a tag
-
-### Confession details and updates
-
-- `PUT /api/confessions/:id` — update an existing confession
-- `DELETE /api/confessions/:id` — soft-delete a confession
-- `PATCH /api/confessions/:id/restore` — restore a soft-deleted confession
-
-### Stellar anchoring
-
-- `POST /api/confessions/:id/anchor` — anchor a confession on Stellar
-- `GET /api/confessions/:id/stellar/verify` — verify a confession anchor
-
-### Reactions
-
-`POST /api/reactions`
-
-Request body:
+Response `201 Created`:
 
 ```json
 {
-  "confessionId": "4f8f8eb0-b6d8-4a92-8f77-6fa3c7aa2e67",
-  "anonymousUserId": "2c11e9ce-4f2f-4f06-a5d8-faf2917fd5d9",
-  "emoji": "🔥"
+  "drillId": "drill_2026_04_25_app",
+  "kind": "application",
+  "outcome": "succeeded",
+  "durationMs": 42000,
+  "createdAt": "2026-04-25T10:02:00.000Z",
+  "expiresAt": "2026-07-24T10:02:00.000Z"
 }
 ```
 
-### Messages
+### Validation and failure semantics
 
-- `POST /api/messages` — send an anonymous message to a confession author
-- `POST /api/messages/reply` — reply to an anonymous message as the confession author
-- `GET /api/messages/threads` — list message threads for authenticated user
-- `GET /api/messages` — list messages in a conversation thread
+- Missing or malformed fields return `400 Bad Request` with a `details` array.
+- `kind` must be `application` or `schema`; `outcome` must be `succeeded`, `failed`, or `aborted`.
+- `durationMs` must be a non-negative integer.
+- If sanitization detects unsanitized secrets the request is rejected with `422 Unprocessable Entity`.
+- Archiving is idempotent per `drillId`: re-posting the same `drillId` returns the existing record with `200 OK` instead of creating a duplicate.
+- Transient storage failures return `503 Service Unavailable`; clients may retry with the same `drillId` safely.
 
-`POST /api/messages` body:
+### Retention and access controls
 
-```json
-{
-  "confession_id": "4f8f8eb0-b6d8-4a92-8f77-6fa3c7aa2e67",
-  "content": "Thanks for sharing this."
-}
-```
-
-### Reports
-
-`POST /api/reports`
-
-Request body:
-
-```json
-{
-  "confessionId": "4f8f8eb0-b6d8-4a92-8f77-6fa3c7aa2e67",
-  "type": "spam",
-  "reason": "Repeated promotional content"
-}
-```
-
-### Tipping
-
-- `GET /api/confessions/:id/tips` — list tips for a confession
+- Evidence records are retained for a bounded window (default 90 days) and then purged.
+- Only operator-role tokens can read or write evidence; records are never exposed on public endpoints.
+- Listing responses omit sanitized input bodies by default; fetch a single record to inspect inputs.

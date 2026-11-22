@@ -29,3 +29,12 @@ Do not deploy consumers that require a new field before migration. Rolling
 back application code is safe while the new fields remain additive; rolling
 back contract WASM requires a compatibility review because migrated storage is
 not automatically removed.
+
+The release dry-run reads
+[`../deployments/contract-storage-migrations.json`](../deployments/contract-storage-migrations.json)
+as the reviewed plan for each contract's initial/current schema versions,
+entrypoint, authorized role, and layout changes. Keep this manifest synchronized
+with the `SCHEMA_VERSION_*` constants, `migrate` implementation, and migration
+tests when a contract's storage changes. Existing deployment records may not
+include the live schema version; the dry-run flags that case for operator
+confirmation instead of assuming compatibility.

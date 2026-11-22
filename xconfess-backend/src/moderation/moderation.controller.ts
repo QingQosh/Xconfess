@@ -23,6 +23,9 @@ import {
 } from '@nestjs/swagger';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { AdminGuard } from '../auth/admin.guard';
+import { CapabilityGuard } from '../auth/capabilities/capability.guard';
+import { RequireCapability } from '../auth/capabilities/require-capability.decorator';
+import { CAPABILITY_MODERATE_CONTENT } from '../auth/capabilities/capability.constants';
 import { AiModerationService, ModerationStatus } from './ai-moderation.service';
 import { ModerationRepositoryService } from './moderation-repository.service';
 import { InvalidModerationTransitionError } from './moderation-state-machine';
@@ -33,6 +36,10 @@ import {
   PolicyImpactThresholdsDto,
 } from './dtos/policy-impact.dto';
 import { LanguageEvaluationService } from './language-evaluation.service';
+import {
+  CreateCalibrationSessionDto,
+  SubmitCalibrationAssessmentDto,
+} from './dtos/calibration.dto';
 
 class TestModerationDto {
   content!: string;
@@ -46,7 +53,8 @@ class ReviewModerationDto {
 @ApiTags('Admin - Moderation')
 @ApiBearerAuth()
 @Controller('admin/moderation')
-@UseGuards(JwtAuthGuard, AdminGuard)
+@UseGuards(JwtAuthGuard, AdminGuard, CapabilityGuard)
+@RequireCapability(CAPABILITY_MODERATE_CONTENT)
 export class ModerationController {
   constructor(
     private readonly aiModerationService: AiModerationService,
@@ -66,6 +74,57 @@ export class ModerationController {
   @ApiResponse({ status: 400, description: 'Invalid evaluation filters.' })
   async runLanguageEvaluation(@Body() dto: RunEvaluationDto) {
     return this.languageEvaluationService.runEvaluation(dto);
+  }
+
+  @Post('calibration-sessions')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    summary: 'Create a short-lived session using only synthetic moderation cases',
+  })
+  @ApiResponse({
+    status: 201,
+    description: 'Calibration session created.',
+  })
+  createCalibrationSession(@Body() dto: CreateCalibrationSessionDto) {
+    return this.languageEvaluationService.createCalibrationSession(dto.caseIds);
+  }
+
+  @Get('calibration-sessions/:sessionId/cases')
+  @ApiOperation({
+    summary: 'List synthetic cases for a moderator calibration session',
+  })
+  @ApiParam({ name: 'sessionId', description: 'Calibration session UUID' })
+  getCalibrationCases(@Param('sessionId') sessionId: string) {
+    return this.languageEvaluationService.getCalibrationCases(sessionId);
+  }
+
+  @Post('calibration-sessions/:sessionId/assessments')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Record a moderator interpretation for one synthetic case',
+  })
+  @ApiParam({ name: 'sessionId', description: 'Calibration session UUID' })
+  recordCalibrationAssessment(
+    @Param('sessionId') sessionId: string,
+    @Body() dto: SubmitCalibrationAssessmentDto,
+    @Req() req: { user?: { id?: number; sub?: number } },
+  ) {
+    const reviewerId = Number(req.user?.id ?? req.user?.sub);
+    return this.languageEvaluationService.recordCalibrationDecision(
+      sessionId,
+      dto.caseId,
+      reviewerId,
+      dto.decision,
+    );
+  }
+
+  @Get('calibration-sessions/:sessionId/results')
+  @ApiOperation({
+    summary: 'Compare aggregate moderator interpretations without reviewer identities',
+  })
+  @ApiParam({ name: 'sessionId', description: 'Calibration session UUID' })
+  getCalibrationResults(@Param('sessionId') sessionId: string) {
+    return this.languageEvaluationService.getCalibrationResults(sessionId);
   }
 
   @Post('policy-impact-preview')

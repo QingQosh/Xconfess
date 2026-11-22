@@ -32,6 +32,7 @@ CON
 audit-report.json
 dependency-policy-report.json
 release-compatibility-report.json
+contract-release-dry-run-report.json
 reproduction-bundle.json
 pr.md
 issue.md

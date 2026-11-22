@@ -17,19 +17,19 @@ export default defineConfig({
   projects: [
     {
       name: 'critical-chromium',
-      testMatch: /public-pages-smoke\.spec\.ts/,
+      testMatch: /(public-pages-smoke|core-flows-smoke|rtl-and-component-playground)\.spec\.ts/,
       retries: process.env.CI === 'true' ? 1 : 0,
       use: { browserName: 'chromium' },
     },
     {
       name: 'critical-firefox',
-      testMatch: /public-pages-smoke\.spec\.ts/,
+      testMatch: /(public-pages-smoke|core-flows-smoke|rtl-and-component-playground)\.spec\.ts/,
       retries: process.env.CI === 'true' ? 1 : 0,
       use: { browserName: 'firefox' },
     },
     {
       name: 'critical-webkit',
-      testMatch: /public-pages-smoke\.spec\.ts/,
+      testMatch: /(public-pages-smoke|core-flows-smoke|rtl-and-component-playground)\.spec\.ts/,
       retries: process.env.CI === 'true' ? 1 : 0,
       use: { browserName: 'webkit' },
     },

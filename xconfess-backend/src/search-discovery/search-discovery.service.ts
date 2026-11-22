@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import * as crypto from 'crypto';
@@ -8,6 +9,7 @@ import { UserDiscoveryPreference } from './entities/user-discovery-preference.en
 import { CreateSavedSearchDto } from './dto/create-saved-search.dto';
 import { SearchConfessionDto } from '../confession/dto/search-confession.dto';
 import { SearchAbuseGuard } from './search-abuse.guard';
+import { User } from '../user/entities/user.entity';
 
 interface ExtendedSearchDto extends SearchConfessionDto {
   dateFrom?: string;
@@ -22,6 +24,8 @@ export class SearchDiscoveryService {
     private savedSearchRepo: Repository<SavedSearch>,
     @InjectRepository(SearchHistory)
     private searchHistoryRepo: Repository<SearchHistory>,
+    @InjectRepository(UserDiscoveryPreference)
+    private discoveryPreferenceRepo: Repository<UserDiscoveryPreference>,
     private readonly searchAbuseGuard: SearchAbuseGuard,
   ) {}
 
@@ -133,6 +137,29 @@ export class SearchDiscoveryService {
 
     if (dto.sort === 'oldest') orderBy = `"createdAt" ASC`;
     if (dto.sort === 'reactions') orderBy = `"reactionCount" DESC`;
+
+    if (userId) {
+      try {
+        const userRepo = manager.getRepository(User);
+        const user = await userRepo.findOne({ where: { id: userId } });
+        if (user) {
+          const excluded = [...user.getBlockedUserIds(), ...user.getMutedUserIds()];
+          if (excluded.length > 0) {
+            parameters.push(excluded);
+            conditions.push(
+              `NOT EXISTS (
+                SELECT 1 FROM user_anonymous_users uau
+                JOIN anonymous_confessions ac ON ac.anonymous_user_id = uau.anonymous_user_id
+                WHERE ac.id::text = confessions.id::text AND uau.user_id = ANY($${paramIndex})
+              )`,
+            );
+            paramIndex++;
+          }
+        }
+      } catch (err) {
+        // Fallback gracefully
+      }
+    }
 
     parameters.push(limit);
     const rawQuery = `
@@ -277,18 +304,41 @@ export class SearchDiscoveryService {
     const personalizationEnabled =
       this.isPersonalizationFeatureEnabled() && !preferences.personalizationOptOut;
 
+    let blockedAnonIds: Set<string> = new Set();
+    try {
+      const user = await manager.getRepository(User).findOne({ where: { id: userId } });
+      if (user) {
+        const excludedUserIds = [...user.getBlockedUserIds(), ...user.getMutedUserIds()];
+        if (excludedUserIds.length > 0) {
+          const rows = await manager.query(
+            `SELECT anonymous_user_id FROM user_anonymous_users WHERE user_id = ANY($1)`,
+            [excludedUserIds],
+          );
+          blockedAnonIds = new Set(rows.map((r: any) => String(r.anonymous_user_id)));
+        }
+      }
+    } catch {
+      // Gracefully continue
+    }
+
     if (!personalizationEnabled) {
       // Non-personalized discovery mode: bypass ALL personal ranking signals
       // (search history, interests, per-user scoring) and serve a deterministic
       // baseline ordering that is identical for every user.
-      const publicRows: any[] = await manager.query(
-        `SELECT id, title, category, reaction_count as "reactionCount", gender, created_at as "createdAt"
+      let publicRows: any[] = await manager.query(
+        `SELECT id, title, category, reaction_count as "reactionCount", gender, created_at as "createdAt", anonymous_user_id as "anonymousUserId"
          FROM anonymous_confessions
          WHERE is_deleted = false
          ORDER BY reaction_count DESC, created_at DESC, id ASC
          LIMIT $1`,
         [safeLimit * 2],
       );
+
+      if (blockedAnonIds.size > 0) {
+        publicRows = publicRows.filter(
+          (r) => !blockedAnonIds.has(String(r.anonymousUserId)),
+        );
+      }
 
       return this.applyDiversityAndExplanations(
         publicRows,
@@ -305,14 +355,20 @@ export class SearchDiscoveryService {
     const interestedKeywords = recentHistory.map((h) => h.query.toLowerCase()).slice(0, 5);
 
     // Fetch candidate pool
-    const candidates: any[] = await manager.query(
-      `SELECT id, title, category, reaction_count as "reactionCount", gender, created_at as "createdAt"
+    let candidates: any[] = await manager.query(
+      `SELECT id, title, category, reaction_count as "reactionCount", gender, created_at as "createdAt", anonymous_user_id as "anonymousUserId"
        FROM anonymous_confessions
        WHERE is_deleted = false
        ORDER BY created_at DESC, reaction_count DESC
        LIMIT $1`,
       [safeLimit * 3],
     );
+
+    if (blockedAnonIds.size > 0) {
+      candidates = candidates.filter(
+        (r) => !blockedAnonIds.has(String(r.anonymousUserId)),
+      );
+    }
 
     // Score and explain candidates
     return this.applyPersonalizedRanking(
@@ -439,6 +495,53 @@ export class SearchDiscoveryService {
     }
 
     return results;
+  }
+
+  private cachedFacets: { data: { topic: string; count: number }[]; expiresAt: number } | null = null;
+
+  async getPublicTopicFacets(limit = 25): Promise<{ topic: string; count: number }[]> {
+    const now = Date.now();
+    if (this.cachedFacets && this.cachedFacets.expiresAt > now) {
+      return this.cachedFacets.data.slice(0, limit);
+    }
+
+    const safeLimit = Math.min(50, Math.max(1, limit));
+    const rawCounts = await this.savedSearchRepo.manager.query(
+      `SELECT t.name AS topic, COUNT(ct.id)::int AS count
+       FROM tags t
+       JOIN confession_tags ct ON ct.tag_id = t.id
+       JOIN anonymous_confessions c ON c.id = ct.confession_id
+       WHERE c.is_deleted = false
+         AND c.is_hidden = false
+         AND c.moderation_status = 'approved'
+       GROUP BY t.name
+       ORDER BY count DESC
+       LIMIT $1`,
+      [safeLimit],
+    ).catch(() => []);
+
+    const facets = (rawCounts || []).map((row: any) => ({
+      topic: row.topic,
+      count: Number(row.count) || 0,
+    }));
+
+    this.cachedFacets = {
+      data: facets,
+      expiresAt: now + 60_000, // 60s cache
+    };
+
+    return facets;
+  }
+
+  invalidateTopicFacetsCache(): void {
+    this.cachedFacets = null;
+  }
+
+  @OnEvent('confession.moderated')
+  @OnEvent('confession.deleted')
+  @OnEvent('confession.restored')
+  handleConfessionLifecycleChange() {
+    this.invalidateTopicFacetsCache();
   }
 }
 

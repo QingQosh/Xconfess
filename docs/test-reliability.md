@@ -8,6 +8,14 @@ The critical public-page navigation suite runs in Chromium, Firefox, and WebKit.
 
 Persist timestamps that represent moments as UTC instants (RFC 3339 timestamps with an offset, or database timestamps normalized to UTC). Render those instants in the viewer's timezone. Values that represent a calendar date, such as a date filter, are not instants: preserve them as `YYYY-MM-DD` and do not convert them through a local midnight. Tests around daylight-saving transitions must assert elapsed-time behavior using instants and calendar display using the selected timezone.
 
+For backend scheduled or delayed jobs, use `DeterministicClock` and
+`MockQueueFixture` from `xconfess-backend/test/deterministic/deterministic-fixtures.ts`
+instead of wall-clock sleeps. The clock freezes both `Date.now()` and
+zero-argument `new Date()`; advance it directly to test due-time, expiry, and
+retry boundaries. Queue tests should set worker concurrency explicitly and
+advance the clock through configured delays/backoff. Restore the clock even
+when a test fails.
+
 ## Flaky-test triage
 
 Do not permanently skip a flaky test without registering it in `.github/test-quarantine.json`. Each entry names the test, an owner, an expiry date, a tracking issue, a concise reason, and whether the suspected cause is a product or infrastructure failure. The CI validator rejects missing metadata, unregistered static skips, expired entries, and entries that no longer match a skipped test. Prefer repairing the cause and removing the registry entry; quarantine is temporary, not a replacement for a test.

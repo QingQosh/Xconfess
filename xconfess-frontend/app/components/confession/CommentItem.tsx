@@ -52,7 +52,7 @@ export function CommentItem({
           {date}
         </time>
       </div>
-      <p className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200 [overflow-wrap:anywhere]">
+      <p dir="auto" className="min-w-0 whitespace-pre-wrap break-words text-sm leading-relaxed text-zinc-200 [overflow-wrap:anywhere]">
         {comment.content}
       </p>
       {onReply && (

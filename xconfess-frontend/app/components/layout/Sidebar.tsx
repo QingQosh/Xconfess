@@ -48,7 +48,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
       />
 
       <div
-        className={`fixed top-0 right-0 h-full w-72 max-w-[85vw] border-l border-[var(--border)] bg-[var(--surface-strong)] shadow-2xl z-50 transform transition-transform duration-300 ease-in-out md:hidden ${isOpen ? "translate-x-0" : "translate-x-full"
+        className={`fixed top-0 end-0 h-full w-72 max-w-[85vw] border-s border-[var(--border)] bg-[var(--surface-strong)] shadow-2xl z-50 transform transition-transform duration-300 ease-in-out md:hidden ${isOpen ? "translate-x-0" : "translate-x-full rtl:-translate-x-full"
           }`}
         role="dialog"
         aria-modal="true"
@@ -63,7 +63,7 @@ export default function Sidebar({ isOpen, onClose }: SidebarProps) {
             <button
               ref={closeButtonRef}
               onClick={onClose}
-              className="p-2 -mr-2 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-full hover:bg-zinc-100 dark:hover:bg-slate-800 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
+              className="p-2 -me-2 text-gray-500 hover:text-gray-700 dark:text-slate-400 dark:hover:text-slate-200 rounded-full hover:bg-zinc-100 dark:hover:bg-slate-800 transition-colors min-h-[44px] min-w-[44px] flex items-center justify-center"
               aria-label="Close menu"
             >
               <X size={24} />

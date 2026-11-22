@@ -16,6 +16,8 @@ import { Comment } from '../comment/entities/comment.entity';
 import { Message } from '../messages/entities/message.entity';
 import { Tip } from '../tipping/entities/tip.entity';
 import { StellarAnchor } from '../stellar/entities/stellar-anchor.entity';
+import { AnalyticsConsentRecord } from './entities/analytics-consent-record.entity';
+import { AnalyticsConsentService } from './analytics-consent.service';
 
 @Global()
 @Module({
@@ -30,11 +32,24 @@ import { StellarAnchor } from '../stellar/entities/stellar-anchor.entity';
       Message,
       Tip,
       StellarAnchor,
+      AnalyticsConsentRecord,
     ]),
     CacheModule,
   ],
   controllers: [AnalyticsController, PublicTractionController],
-  providers: [AnalyticsService, AnalyticsEventService, TractionMetricsService, FunnelMetricsService],
-  exports: [AnalyticsService, AnalyticsEventService, TractionMetricsService, FunnelMetricsService],
+  providers: [
+    AnalyticsService,
+    AnalyticsEventService,
+    AnalyticsConsentService,
+    TractionMetricsService,
+    FunnelMetricsService,
+  ],
+  exports: [
+    AnalyticsService,
+    AnalyticsEventService,
+    AnalyticsConsentService,
+    TractionMetricsService,
+    FunnelMetricsService,
+  ],
 })
 export class AnalyticsModule {}

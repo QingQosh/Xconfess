@@ -1,5 +1,8 @@
 # Frontend E2E (Playwright)
 
+See [BROWSER_SUPPORT.md](../../docs/BROWSER_SUPPORT.md) for
+the minimum supported browser versions and the critical-engine test matrix.
+
 ## Public pages smoke
 
 Lightweight checks for demo-critical routes as an unauthenticated visitor (protected routes expect a redirect to `/login`).

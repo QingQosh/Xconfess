@@ -9,6 +9,7 @@ This is the canonical runbook for planning, building, deploying, and upgrading x
 ## Table of Contents
 
 - [Overview](#overview)
+- [Read-Only Release Dry Run](#read-only-release-dry-run)
 - [Pre-Release Checklist](#pre-release-checklist)
 - [Toolchain Verification](#toolchain-verification)
 - [Build Phase](#build-phase)
@@ -19,6 +20,46 @@ This is the canonical runbook for planning, building, deploying, and upgrading x
 - [Storage Migration Testing](#storage-migration-testing)
 - [Upgrade and Rollback](#upgrade-and-rollback)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Read-Only Release Dry Run
+
+Before requesting release approval, generate a network-specific operator plan:
+
+```bash
+./scripts/contracts-release.sh deploy --network testnet --dry-run
+# Or choose a report location:
+./scripts/contracts-release.sh deploy --network mainnet --dry-run --output /tmp/mainnet-release-plan.json
+```
+
+The command writes `contract-release-dry-run-report.json` by default (or the
+path passed to `--output`) and does not invoke Stellar, run migration tests,
+request deployment authorization, build contracts, deploy, or rewrite
+deployment/manifests. The report includes candidate WASM/ABI digests, locally
+verified artifact hashes when artifacts are present, target network metadata,
+available ABI evidence, storage migration steps, and pending approvals. ABI
+compatibility is only marked compatible when both prior and candidate function
+signatures are available; function names alone are not sufficient. The storage
+schema plan is maintained in
+[`deployments/contract-storage-migrations.json`](../deployments/contract-storage-migrations.json).
+
+Deployment records predating storage-schema and ABI-function fields cannot
+prove the on-chain state or prior ABI. Such reports are marked
+`review_required`, and operators must confirm the live schema and compare the
+deployed ABI before proceeding. A digest mismatch, ABI removal, contract-set
+mismatch, or schema downgrade is `blocked`. Reports with all evidence verified
+are `ready_for_approval`; that status does not mean approvals have been granted.
+
+The CLI exits `0` for `ready_for_approval`, `2` for `review_required`, and `1`
+for a blocked report or invalid/unreadable inputs. A report is still written
+for blocked or review-required findings when its inputs are readable. Invalid
+arguments, malformed inputs, and attempts to overwrite deployment or release
+input metadata fail explicitly without writing a report. Correct the missing
+or inconsistent evidence and rerun before deployment.
+
+This report is a release-boundary CLI artifact; it does not create an
+application API or alter backend/frontend behavior.
 
 ---
 

@@ -5,6 +5,7 @@ import { useCallback } from "react";
 import { ArrowDown, Anchor, Lock, MessageSquareText } from "lucide-react";
 import Header from "./components/layout/Header";
 import { ConfessionFeed } from "./components/confession/ConfessionFeed";
+import { AnonymousPromptCard } from "./components/confession/AnonymousPromptCard";
 import { ErrorBoundary } from "./components/common/ErrorBoundary";
 import { Button } from "./components/ui/button";
 
@@ -167,6 +168,8 @@ export default function Home() {
             </section>
 
             <section id="feed" className="space-y-6 pt-6">
+              <AnonymousPromptCard />
+
               <div className="space-y-3">
                 <p className="eyebrow">Recent confessions</p>
                 <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">

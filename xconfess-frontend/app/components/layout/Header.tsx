@@ -41,7 +41,7 @@ export default function Header() {
             <BrandLogo priority imageClassName="w-[112px] sm:w-[164px] dark:hidden" />
             <BrandLogo priority tone="light" imageClassName="hidden w-[112px] sm:w-[164px] dark:block" />
 
-            <div className="hidden items-center space-x-2 md:flex">
+            <div className="hidden items-center gap-2 md:flex">
               <Link href="/" className={navLinkClass}>
                 Feed
               </Link>
@@ -61,7 +61,7 @@ export default function Header() {
               <button
                 ref={menuButtonRef}
                 type="button"
-                className="-mr-2 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-[var(--secondary)] transition-colors hover:bg-[var(--surface-strong)] hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
+                className="-me-2 flex min-h-[44px] min-w-[44px] items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-[var(--secondary)] transition-colors hover:bg-[var(--surface-strong)] hover:text-[var(--foreground)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--primary)]"
                 aria-label="Open menu"
                 aria-expanded={mobileMenuOpen}
                 aria-controls="mobile-navigation"

@@ -12,6 +12,7 @@ import { ReactionChart } from "./ReactionChart";
 import { ActivityChart } from "./ActivityChart";
 import { MetricsOverview } from "./MetricsOverview";
 import { AnalyticsLoadingSkeleton } from "./LoadingState";
+import { TopicInclusionRulesPanel } from "./TopicInclusionRulesPanel";
 import { TrendingUp, Calendar, Flame, Clock } from "lucide-react";
 
 type AnalyticsApiResponse = Partial<AnalyticsData> & {
@@ -303,6 +304,9 @@ export const TrendingDashboard = () => {
         ) : (
           <MetricsOverview metrics={totalMetrics} period={period} />
         )}
+
+        {/* Public Topic Inclusion Rules Explanation */}
+        <TopicInclusionRulesPanel period={period} className="mb-8" />
 
         {/* Charts Section */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">

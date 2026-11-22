@@ -113,6 +113,126 @@ If a full check cannot run locally because a dependency, Docker service, or
 platform tool is unavailable, document the failed command and the exact blocker
 in the pull request body.
 
+## Creating A Migration-Backed Feature
+
+This section walks through the complete sequence for adding a feature that
+persists data: entity definition, migration authoring, tests, rollback, and
+deployment. Follow the steps in order; each step has a runnable command or code
+snippet validated against the repository's migration tooling.
+
+### 1. Define The Entity
+
+Add the entity under `xconfess-backend/src/` next to the feature it belongs to.
+Keep the entity declarative and let the migration own the schema.
+
+```ts
+// xconfess-backend/src/example/example.entity.ts
+import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+
+@Entity('examples')
+export class Example {
+  @PrimaryGeneratedColumn('uuid')
+  id: string;
+
+  @Column({ type: 'varchar', length: 255 })
+  name: string;
+
+  @Column({ type: 'timestamptz', default: () => 'now()' })
+  createdAt: Date;
+}
+```
+
+Register the entity with the backend data source so both the app and the
+migration CLI see it. Do not rely on `synchronize: true`; schema changes must
+always go through a migration.
+
+### 2. Author The Migration
+
+Generate a migration from the entity diff, then review the generated file
+before committing it.
+
+```bash
+npm run backend:migration:generate -- src/migrations/AddExamples
+```
+
+If the generator is unavailable, create the file by hand under
+`xconfess-backend/src/migrations/` using the same timestamped naming convention
+and implement both `up` and `down`:
+
+```ts
+import { MigrationInterface, QueryRunner, Table } from 'typeorm';
+
+export class AddExamples1700000000000 implements MigrationInterface {
+  async up(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.createTable(
+      new Table({
+        name: 'examples',
+        columns: [
+          { name: 'id', type: 'uuid', isPrimary: true, generationStrategy: 'uuid', default: 'gen_random_uuid()' },
+          { name: 'name', type: 'varchar', length: '255' },
+          { name: 'createdAt', type: 'timestamptz', default: 'now()' },
+        ],
+      }),
+    );
+  }
+
+  async down(queryRunner: QueryRunner): Promise<void> {
+    await queryRunner.dropTable('examples');
+  }
+}
+```
+
+Apply and inspect migrations locally:
+
+```bash
+npm run backend:migration:run
+npm run backend:migration:show
+```
+
+### 3. Test The Feature
+
+Add focused tests that cover the primary flow plus the compatibility and
+regression risks specific to the change (existing rows, nullable columns,
+backfill behavior). Run them with:
+
+```bash
+npm run backend:test
+```
+
+### 4. Roll Back Safely
+
+Every migration must be reversible. Verify the `down` path locally before
+opening the pull request:
+
+```bash
+npm run backend:migration:revert
+npm run backend:migration:run
+```
+
+If a migration cannot be safely reversed (for example a destructive column
+drop), document the manual rollback steps in the pull request and in
+`DEPLOYMENT.md`.
+
+### 5. Deploy
+
+Migrations run as part of the deployment pipeline before the new application
+version serves traffic. See `DEPLOYMENT.md` for the rollout and rollback
+sequence. Do not run migrations manually against production outside that
+pipeline.
+
+### Success, Validation, And Failure Semantics
+
+- **Success:** the migration applies cleanly, `backend:migration:show` lists it
+  as executed, and the feature's tests pass.
+- **Validation/authorization:** only the deployment pipeline (or an authorized
+  maintainer locally) may run migrations; contributors cannot apply migrations
+  to shared environments.
+- **Failure/retry:** a failed migration aborts the deployment and leaves the
+  previous version serving traffic. Fix the migration in a new commit and
+  re-run the pipeline; do not hand-edit applied migrations. If a migration
+  partially applied, use `backend:migration:revert` to return to the last good
+  state before retrying.
+
 ## Advanced Search Query Grammar
 
 Advanced search is parsed and enforced by the backend at the owning boundary
@@ -247,132 +367,4 @@ replay command runs over a selected set of moderation cases in isolation.
 ### Running A Replay
 
 ```bash
-npm run backend:replay -- \
-  --policy-version <new-version> \
-  --cases <case-id,case-id,...>
-```
-
-- Replay is an authorized action (moderator/admin) enforced at the owning
-  backend boundary; unauthorized invocations are rejected with `403`.
-- An unknown or retired target policy version is rejected with `422`.
-
-### Isolation Guarantees
-
-- Replay never mutates live user content, never writes production decision
-  records, and never triggers notifications or fanout.
-- Replay reads cases into an isolated evaluation context; results are written
-  only to the diff report, not to the case store.
-
-### Redaction
-
-- Replay inputs and outputs redact identifiers: user ids, author/reporter
-  identity, and raw content are replaced with stable opaque tokens.
-- The diff report contains only redacted tokens, decision labels, and counts —
-  never raw content or personal identifiers.
-
-### Diff Report
-
-- The report compares the recorded decision against the decision the new policy
-  version would produce, per case, and summarizes changed vs unchanged counts.
-- The report is advisory: it cannot apply decisions to production records.
-
-### Testing Expectations
-
-Backend tests for this area must cover the expected path plus rejection cases
-(unauthorized replay, unknown policy version) and the regression risk that a
-replay mutates live content, writes production decisions, or leaks identifiers.
-Run them with:
-
-```bash
-npm run backend:test
-```
-
-## User Safety Filters For Sensitive Content
-
-Users can opt in or out of seeing sensitive content categories. These are
-**display preferences only** and never change moderation enforcement.
-
-### Supported Categories
-
-- **Join** — a user may join only via an accepted invite or an explicit
-  self-join policy enabled for the conversation. Direct joins without either
-  are rejected with `403`.
-- **Leave** — any active member may leave. Leaving removes the member from
-  future fanout but preserves their historical access per the history rules
-  below.
-- **Remove** — only the conversation owner or an authorized moderator may
-  remove another member. Removing a non-member is a no-op success; removing
-yourself must go through the leave path.
-- Every transition is idempotent and records the actor, target, and reason so
-  audit trails stay consistent.
-
-### Where Preferences Are Applied
-
-- Only active members with the `invite` capability (owner, moderators, or
-  members when the conversation allows member invites) may create invites.
-- Invites are scoped to a single conversation and a single invitee, expire, and
-  
-
-### Supported Retention Choices And Defaults
-
-- `7d`, `30d`, `90d`, `1y`, and `forever` are the supported retention choices.
-- The default is `30d` when a conversation does not specify one.
-- Retention is set by an authorized participant (owner or moderator) and is
-  validated against the supported set; unknown values are rejected with `422`.
-- Changing retention applies to messages going forward and re-evaluates
-  existing messages against the new window.
-
-### Expiry Enforcement
-
-- Expiry is enforced in primary storage: expired messages are excluded from
-  reads and purged by the retention job.
-- Secondary indexes (search, previews, unread) are updated in the same
-  operation so expired content is never surfaced.
-- Notifications and device sync fanout skip expired messages; clients receive
-  an expiry event and drop the local copy.
-- Reads of an expired message return `410 Gone` rather than `404`, so clients
-  can distinguish expiry from a missing message.
-
-### Deletion Completion Records
-
-```bash
-npm run backend:test
-```
-
-## Cross-Domain Data Integrity Verification (#218)
-
-Independent table-level constraints can leave subtle orphan references across boundaries.
-The platform provides a read-only integrity report endpoint at `GET /api/admin/integrity/report` with:
-- **Domains covered**: `identity` (links between users and anonymous identities), `content` (confessions, comments), `export` (export requests, chunks), and `moderation` (reports, evidence).
-- **Stable Error Codes**: Canonical `ERR_INTEGRITY_*` codes for predictable log parsing and alert routing.
-- **Bounded Execution**: Configurable timeout budgets (`timeoutMs`, default 5s, max 30s) and per-check row limits (`limit`, default 50, max 200). If execution exceeds time bounds, the report returns truncated without crashing.
-- **Repair Guidance**: Each violation includes an actionable SQL query or remediation step for operators.
-- **Authorization**: Strictly restricted to administrators via `JwtAuthGuard` and `AdminGuard`.
-
-## Locale-Aware Message Catalogues with Typed Coverage (#219)
-
-User-facing strings are decoupled from presentation components into typed message catalogues under `xconfess-frontend/app/lib/i18n/`.
-- **Catalogue Structure**: Canonical keys are defined in `types.ts` (`REQUIRED_MESSAGE_KEYS`) and implemented in locale files (`locales/en.ts`, `locales/es.ts`).
-- **Typed Coverage**: The TypeScript types enforce that all catalogues provide every required key. `assertCompleteCatalog` verifies runtime completeness and fails checks if any key is missing.
-- **Fallback Behavior**: When a localized string is missing in the user's active locale, the `useTranslation` hook automatically falls back to the default English (`en`) catalogue. If missing in all catalogues, the key itself is returned.
-
-## Localized Formatting for Dates, Numbers, and Relative Time (#220)
-
-Shared formatters live in `xconfess-frontend/app/lib/i18n/formatters.ts` and wrap standard `Intl` APIs:
-- **Relative vs Absolute Time**: `formatRelativeTime` formats recent intervals into relative units (seconds, minutes, hours, days) and automatically transitions to absolute dates (`formatAbsoluteDate`) beyond configurable thresholds.
-- **Daylight Saving Time (DST)**: Relative durations use monotonic UTC millisecond math to avoid hour-boundary distortion during spring-forward or fall-back transitions.
-- **Safe Fallbacks**: Missing, null, undefined, or non-parseable inputs return safe fallback tokens (default `"—"`) rather than throwing runtime exceptions.
-- **Numbers and Pluralization**: `formatNumber` and `formatCount` format counts, compact abbreviations (`1.2K`), and locale-appropriate plural nouns.
-
-## Cross-Tab Draft Conflict Resolution (#221)
-
-When users edit confession drafts across multiple browser tabs:
-- **Revision Tracking**: Drafts maintain monotonic integer `version` numbers across saves.
-- **Stale Write Detection**: `useDrafts` inspects storage state prior to persisting. If another tab has committed a higher version, the local write is rejected and flagged as a `tab_conflict`.
-- **Dual-Version Preservation**: Unsaved local content and the newer conflicting version from storage are both captured in memory without data loss.
-- **Accessible Decision Flow**: `DraftManager` presents an accessible alert (`role="alert"`, `aria-live="assertive"`) offering choices to:
-  1. *Keep my version*: Rebase and persist local content with an incremented revision.
-  2. *Use other tab's version*: Overwrite the local editor with the newer copy.
-  3. *Save as separate draft*: Store the local content as a new draft, preserving both versions.
-  4. *Dismiss*: Dismiss the notice without altering editor state.
-
+npm run 

@@ -38,15 +38,22 @@ describe('Deterministic Full-Stack Test Environment (Issue #109)', () => {
   });
 
   describe('Deterministic Clock', () => {
-    it('should freeze time to an exact point and advance deterministically', () => {
+    it('freezes Date, Date.now, and advances them deterministically', () => {
       clock.freeze('2026-09-24T10:00:00.000Z');
       expect(Date.now()).toBe(new Date('2026-09-24T10:00:00.000Z').getTime());
+      expect(new Date().toISOString()).toBe('2026-09-24T10:00:00.000Z');
 
-      // Advance by 5 minutes
       clock.advance(5 * 60 * 1000);
       expect(Date.now()).toBe(new Date('2026-09-24T10:05:00.000Z').getTime());
+      expect(new Date().toISOString()).toBe('2026-09-24T10:05:00.000Z');
 
       clock.restore();
+    });
+
+    it('rejects invalid times and advances', () => {
+      expect(() => new DeterministicClock('not-a-time')).toThrow(RangeError);
+      expect(() => clock.advance(-1)).toThrow(RangeError);
+      expect(() => clock.advance(Number.NaN)).toThrow(RangeError);
     });
   });
 
@@ -110,6 +117,111 @@ describe('Deterministic Full-Stack Test Environment (Issue #109)', () => {
         /State leak detected in Queue: 1 jobs remained unprocessed/,
       );
       queue.clear();
+    });
+
+    it('waits for delayed jobs until their due time without sleeping', async () => {
+      clock.freeze('2026-09-24T10:00:00.000Z');
+      const handler = jest.fn().mockResolvedValue(undefined);
+      const job = await queue.add(
+        'notification-digest',
+        { recipientId: 'recipient-1' },
+        { delay: 60_000 },
+      );
+
+      await queue.processSync(handler);
+      expect(handler).not.toHaveBeenCalled();
+      expect(job.status).toBe('delayed');
+
+      clock.advance(59_999);
+      await queue.processSync(handler);
+      expect(handler).not.toHaveBeenCalled();
+
+      clock.advance(1);
+      await queue.processSync(handler);
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(job.status).toBe('completed');
+    });
+
+    it('retries with deterministic exponential backoff and moves exhausted jobs to DLQ', async () => {
+      clock.freeze('2026-09-24T10:00:00.000Z');
+      const handler = jest
+        .fn()
+        .mockRejectedValueOnce(new Error('temporary'))
+        .mockRejectedValueOnce(new Error('still unavailable'))
+        .mockResolvedValue(undefined);
+      const job = await queue.add(
+        'notification-digest',
+        {},
+        {
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1_000 },
+        },
+      );
+
+      await queue.processSync(handler);
+      expect(job.status).toBe('delayed');
+      expect(job.attempts).toBe(1);
+
+      clock.advance(999);
+      await queue.processSync(handler);
+      expect(handler).toHaveBeenCalledTimes(1);
+
+      clock.advance(1);
+      await queue.processSync(handler);
+      expect(job.status).toBe('delayed');
+      expect(job.attempts).toBe(2);
+
+      clock.advance(1_999);
+      await queue.processSync(handler);
+      expect(handler).toHaveBeenCalledTimes(2);
+
+      clock.advance(1);
+      await queue.processSync(handler);
+      expect(handler).toHaveBeenCalledTimes(3);
+      expect(job.status).toBe('completed');
+      expect(queue.getDlq()).toHaveLength(0);
+
+      const exhaustedJob = await queue.add(
+        'expiry-cleanup',
+        {},
+        { attempts: 2, backoff: { type: 'fixed', delay: 500 } },
+      );
+      const alwaysFails = jest.fn().mockRejectedValue(new Error('permanent'));
+      await queue.processSync(alwaysFails);
+      expect(exhaustedJob.status).toBe('delayed');
+      clock.advance(500);
+      await queue.processSync(alwaysFails);
+      expect(exhaustedJob.status).toBe('dlq');
+      expect(queue.getDlq()).toContain(exhaustedJob);
+    });
+
+    it('limits concurrent workers and rejects invalid worker settings', async () => {
+      const jobs = await Promise.all(
+        Array.from({ length: 5 }, (_, index) =>
+          queue.add('scheduled-job', { index }),
+        ),
+      );
+      let activeWorkers = 0;
+      let peakWorkers = 0;
+
+      await queue.processSync(
+        async () => {
+          activeWorkers++;
+          peakWorkers = Math.max(peakWorkers, activeWorkers);
+          await Promise.resolve();
+          activeWorkers--;
+        },
+        { concurrency: 2 },
+      );
+
+      expect(peakWorkers).toBe(2);
+      expect(jobs.every((job) => job.status === 'completed')).toBe(true);
+      await expect(
+        queue.processSync(async () => undefined, { concurrency: 0 }),
+      ).rejects.toThrow(RangeError);
+      await expect(
+        queue.add('invalid-job', {}, { attempts: 0 }),
+      ).rejects.toThrow(RangeError);
     });
   });
 

@@ -18,6 +18,8 @@ import { UserAnonymousUser } from '../user/entities/user-anonymous-link.entity';
 import { WebSocketLogger } from '../websocket/websocket.logger';
 import { WsRolesGuard } from '../auth/guards/ws-roles.guard';
 import { Reflector } from '@nestjs/core';
+import { CapabilityPolicyService } from '../auth/capabilities/capability-policy.service';
+import { CapabilityGuard } from '../auth/capabilities/capability.guard';
 import { Tip } from '../tipping/entities/tip.entity';
 import { AuditLogModule } from '../audit-log/audit-log.module';
 import { NotificationsModule } from '../notifications/notifications.module';
@@ -33,6 +35,12 @@ import { StellarAnchor } from '../stellar/entities/stellar-anchor.entity';
 import { SorobanEventCheckpoint } from '../stellar/entities/soroban-event-checkpoint.entity';
 import { DiagnosticsBundleService } from './services/diagnostics-bundle.service';
 import { CrossDomainIntegrityService } from './services/cross-domain-integrity.service';
+import { AdminActionApproval } from './entities/admin-action-approval.entity';
+import { ModerationAccessGrant } from './entities/moderation-access-grant.entity';
+import { ModerationPolicyRun } from './entities/moderation-policy-run.entity';
+import { ModerationGovernanceService } from './services/moderation-governance.service';
+import { ModerationGovernanceController } from './controllers/moderation-governance.controller';
+import { ModerationAccessGrantGuard } from '../auth/guards/moderation-access-grant.guard';
 
 @Module({
   imports: [
@@ -48,6 +56,9 @@ import { CrossDomainIntegrityService } from './services/cross-domain-integrity.s
       TemplateVersion,      // Added
       StellarAnchor,
       SorobanEventCheckpoint,
+      AdminActionApproval,
+      ModerationAccessGrant,
+      ModerationPolicyRun,
     ]),
     AuthModule,
     UserModule,
@@ -58,6 +69,7 @@ import { CrossDomainIntegrityService } from './services/cross-domain-integrity.s
   controllers: [
     AdminController,
     NotificationTemplatesController, // Added
+    ModerationGovernanceController, // Added
   ],
   providers: [
     AdminService,
@@ -69,9 +81,13 @@ import { CrossDomainIntegrityService } from './services/cross-domain-integrity.s
     WebSocketLogger,
     WsRolesGuard,
     Reflector,
+    CapabilityPolicyService,
+    CapabilityGuard,
     TemplatesService, // Added
     DiagnosticsBundleService,
     CrossDomainIntegrityService,
+    ModerationGovernanceService,
+    ModerationAccessGrantGuard,
   ],
   exports: [
     AdminService, 
@@ -80,6 +96,8 @@ import { CrossDomainIntegrityService } from './services/cross-domain-integrity.s
     TemplatesService, // Added
     DiagnosticsBundleService,
     CrossDomainIntegrityService,
+    CapabilityPolicyService,
+    CapabilityGuard,
   ],
 })
 export class AdminModule {}

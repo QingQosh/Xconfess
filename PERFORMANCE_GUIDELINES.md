@@ -229,16 +229,60 @@ ORDER BY seq_tup_read DESC;
 | LCP | 2.5s | 3s |
 | CLS | 0.1 | 0.15 |
 
+## Service-Level Startup Budget
+
+Cold-start is measured as a sequence of named phases at the owning boundary so regressions are attributed to a phase rather than to anecdotal "it feels slow" timing. The budgets below are the source of truth for the startup check; keep them in sync with the budget config used by the harness.
+
+### Backend Cold-Start Phases
+
+| Phase | Budget | Notes |
+|-------|--------|-------|
+| `config` | 50ms | Env/config load and validation |
+| `database` | 500ms | Connection pool warm-up |
+| `cache` | 100ms | Cache client connect |
+| `modules` | 300ms | Nest module graph init |
+| `listen` | 100ms | Bind HTTP listener |
+| **total** | **1000ms** | Sum of phases |
+
+### Frontend Cold-Start Phases
+
+| Phase | Budget | Notes |
+|-------|--------|-------|
+| `bootstrap` | 150ms | App shell / provider mount |
+| `route` | 400ms | First route render |
+| `hydration` | 300ms | React hydration |
+| **total** | **800ms** | Sum of phases |
+
+### Running the Startup Budget Check
+
+```bash
+# Backend + frontend cold-start phases against documented budgets
+npm run benchmark:triage:test
+```
+
+The harness emits one line per phase (`phase`, `measured`, `budget`, `status`) and exits non-zero when any phase exceeds its budget or a required phase is missing from the measurement.
+
+### Pass / Fail Semantics
+
+- **Pass:** every required phase is present and `measured <= budget` for each phase and for the total.
+- **Fail (over budget):** a phase or total exceeds its budget; the report names the phase, measured value, and budget.
+- **Fail (invalid input):** a malformed budget config (non-numeric, negative, or missing budget) or a measurement missing a required phase fails fast with a descriptive error instead of silently passing.
+- **Fail (measurement error):** if a phase throws during measurement, the harness records the failure and exits non-zero; it does not retry silently.
+
+### Regression Evidence
+
+When a startup budget changes, attach the harness output (per-phase measured vs. budget) to the PR so reviewers can see the delta against the documented budgets rather than relying on anecdotal timing.
+
 ## Per-Route Bundle & Hydration Budgets
 
-Budgets are enforced per representative route so a single heavy page cannot silently regress initial load or hydration. The values below are the source of truth for the CI budget check; keep them in sync with the budget config used by the build.
+Initial JavaScript budgets are enforced per representative route so a single heavy page cannot silently regress initial load. The values below are the source of truth for the CI budget check; keep them in sync with the budget config used by the build. Hydration thresholds remain profiling targets and are not measured by the bundle check.
 
 ### Representative Routes
 
 | Route | Initial JS (gzip) | Hydration (TBT) | Notes |
 |-------|-------------------|-----------------|-------|
 | `/` (home) | 200KB | 200ms | Marketing/landing surface |
-| `/feed` | 250KB | 300ms | Primary authenticated list |
+| `/confessions` | 250KB | 300ms | Primary confession list |
 | `/confessions/[id]` | 250KB | 300ms | Detail view |
 | `/admin` | 350KB | 400ms | Admin panel, heavy tables |
 
@@ -250,18 +294,18 @@ Budgets are enforced per representative route so a single heavy page cannot sile
 
 ### Enforcing Budgets in CI
 
-Budgets are checked on every pull request against the representative routes above. A violation fails the job and prints the offending route, the measured value, and the budget it exceeded so the fix is actionable.
+The frontend CI job measures each representative route's distinct JavaScript chunks from Next.js's app build manifest, gzip-compresses each output chunk, and enforces the initial-JS limits above. A violation fails the job and prints the route, measured total, configured limit, and largest contributing chunks. Hydration TBT and long-task limits require browser profiling; they are not inferred from bundle sizes.
 
 ```bash
-# Bundle + hydration budget check (runs in CI)
+# Per-route JavaScript budget check (runs in CI after the frontend build)
 npm run frontend:budget
 ```
 
-When a route exceeds its budget, the output must include:
+When a route exceeds its JavaScript budget, the output includes:
 - the route path,
-- the measured size/time,
-- the configured budget,
-- the largest contributing chunks or imports.
+- the measured gzip size,
+- the configured gzip budget,
+- the largest contributing chunks.
 
 ### Detecting Oversized Imports
 
@@ -321,50 +365,4 @@ Prefer splitting at the route boundary first, then at the component boundary for
 
 3. **Premature optimization**
    - Measure first
-   - Profile before optimizing
-
-4. **Ignoring per-route budgets**
-   - A green global bundle can still hide a heavy route
-   - Check the per-route budget output before merging
-
-## Testing Performance
-
-### Backend Testing
-
-```bash
-# Load testing
-npm run test:load
-
-# Query analysis
-npm run db:analyze
-
-# Cache metrics
-npm run cache:stats
-```
-
-### Frontend Testing
-
-```bash
-# Lighthouse
-npm run lighthouse
-
-# Bundle analysis
-ANALYZE=true npm run build
-
-# Bundle + hydration budget check
-npm run frontend:budget
-
-# Performance tests
-npm run test:performance
-```
-
-## Resources
-
-- [Next.js Performance Docs](https://nextjs.org/docs/app/building-your-application/optimizing)
-- [React Performance](https://react.dev/learn/render-and-commit)
-- [PostgreSQL Performance](https://www.postgresql.org/docs/current/performance-tips.html)
-- [Web Vitals](https://web.dev/vitals/)
-
----
-
-**Remember:** Measure first, optimize second. Don't optimize without data!
+   - P

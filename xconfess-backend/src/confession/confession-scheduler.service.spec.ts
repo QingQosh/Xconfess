@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { DataSource, Repository } from 'typeorm';
 import { ConfessionSchedulerService } from './confession-scheduler.service';
 import { AnonymousConfession } from './entities/confession.entity';
+import { DeterministicClock } from '../../test/deterministic/deterministic-fixtures';
 
 describe('ConfessionSchedulerService', () => {
   let service: ConfessionSchedulerService;
@@ -90,6 +91,35 @@ describe('ConfessionSchedulerService', () => {
         'status = :status',
         { status: 'scheduled' },
       );
+    });
+
+    it('uses the controlled instant for due selection and publication timestamps', async () => {
+      const clock = new DeterministicClock('2026-09-24T10:00:00.000Z');
+      clock.freeze();
+      queryBuilder.getMany.mockResolvedValue([
+        {
+          id: 'conf-deterministic',
+          status: 'scheduled',
+          publishAt: new Date('2026-09-24T09:59:00.000Z'),
+        },
+      ] as AnonymousConfession[]);
+      updateBuilder.execute.mockResolvedValue({ affected: 1 });
+
+      try {
+        await service.publishScheduledConfessions();
+
+        const now = new Date('2026-09-24T10:00:00.000Z');
+        expect(queryBuilder.andWhere).toHaveBeenCalledWith(
+          'confession.publishAt <= :now',
+          { now },
+        );
+        expect(updateBuilder.set).toHaveBeenCalledWith({
+          status: 'published',
+          created_at: now,
+        });
+      } finally {
+        clock.restore();
+      }
     });
 
     it('skips confessions already published by a concurrent run (affected: 0)', async () => {
@@ -251,6 +281,41 @@ describe('ConfessionSchedulerService', () => {
         order: { publishAt: 'ASC' },
       });
       expect(result).toHaveLength(2);
+    });
+  });
+
+  describe('reconcileStaleScheduledPublications', () => {
+    it('detects overdue scheduled posts and safely resumes eligible work using SKIP LOCKED', async () => {
+      queryBuilder.setOnLocked = jest.fn().mockReturnThis();
+      const overdueConfessions = [
+        { id: 'c-stale-1', status: 'scheduled', publishAt: new Date(Date.now() - 600000), isDeleted: false },
+      ] as any;
+
+      queryBuilder.getMany.mockResolvedValue(overdueConfessions);
+      updateBuilder.execute.mockResolvedValue({ affected: 1 });
+
+      const res = await service.reconcileStaleScheduledPublications({ thresholdMinutes: 5 });
+
+      expect(queryBuilder.setOnLocked).toHaveBeenCalledWith('skip_locked');
+      expect(res.attempted).toBe(1);
+      expect(res.reconciled).toBe(1);
+      expect(res.terminal).toBe(0);
+    });
+
+    it('reports terminal status for deleted or corrupted scheduled records', async () => {
+      queryBuilder.setOnLocked = jest.fn().mockReturnThis();
+      repo.update = jest.fn().mockResolvedValue({ affected: 1 });
+      const deletedConfession = [
+        { id: 'c-del-1', status: 'scheduled', publishAt: new Date(Date.now() - 600000), isDeleted: true },
+      ] as any;
+
+      queryBuilder.getMany.mockResolvedValue(deletedConfession);
+
+      const res = await service.reconcileStaleScheduledPublications();
+
+      expect(res.attempted).toBe(1);
+      expect(res.terminal).toBe(1);
+      expect(repo.update).toHaveBeenCalledWith('c-del-1', { status: 'failed' });
     });
   });
 });

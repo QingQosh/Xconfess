@@ -36,11 +36,32 @@ jobs:
           npm run rollback:drills:dry-run --
           --drill "${{ github.event.inputs.drill || 'all' }}"
           --report-dir "$RUNNER_TEMP/rollback-drill-results"
+      - name: Archive sanitized rollback evidence
+        if: always()
+        env:
+          DRILL: ${{ github.event.inputs.drill || 'all' }}
+          REPORT_DIR: ${{ runner.temp }}/rollback-drill-results
+          EVIDENCE_DIR: ${{ runner.temp }}/rollback-evidence
+          EVIDENCE_RETENTION_DAYS: '90'
+        run: >-
+          npm run rollback:evidence:archive --
+          --drill "$DRILL"
+          --report-dir "$REPORT_DIR"
+          --out-dir "$EVIDENCE_DIR"
+          --retention-days "$EVIDENCE_RETENTION_DAYS"
       - name: Retain evidence and remediation gaps
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: rollback-drill-${{ github.run_id }}
           path: ${{ runner.temp }}/rollback-drill-results/
+          if-no-files-found: warn
+          retention-days: 90
+      - name: Retain sanitized rollback evidence archive
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rollback-evidence-${{ github.run_id }}
+          path: ${{ runner.temp }}/rollback-evidence/
           if-no-files-found: warn
           retention-days: 90

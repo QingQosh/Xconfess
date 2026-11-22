@@ -7,6 +7,7 @@ import { ExportChunk } from './entities/export-chunk.entity';
 import { LessThan } from 'typeorm';
 import { ConfigService } from '@nestjs/config';
 import { AuditLogService } from '../audit-log/audit-log.service';
+import { DeterministicClock } from '../../test/deterministic/deterministic-fixtures';
 
 describe('DataCleanupService', () => {
   let service: DataCleanupService;
@@ -85,6 +86,28 @@ describe('DataCleanupService', () => {
   // â”€â”€ Retention Policy Tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   describe('Retention Policy Enforcement', () => {
+    it('calculates the expiry cutoff and timestamp from the controlled clock', async () => {
+      const clock = new DeterministicClock('2026-03-25T10:00:00.000Z');
+      clock.freeze();
+      mockExportRepository.update.mockResolvedValue({
+        affected: 1,
+        raw: [],
+        generatedMaps: [],
+      });
+
+      try {
+        await service.purgeOldExports();
+
+        const [criteria, update] = mockExportRepository.update.mock.calls[0];
+        expect((criteria as any).createdAt.value).toEqual(
+          new Date('2026-03-18T10:00:00.000Z'),
+        );
+        expect(update.expiredAt).toEqual(new Date('2026-03-25T10:00:00.000Z'));
+      } finally {
+        clock.restore();
+      }
+    });
+
     it('should expire exports older than 7 days', async () => {
       const mockUpdateResult: UpdateResult = {
         affected: 5,

@@ -44,6 +44,13 @@ export class SearchDiscoveryController {
     return this.service.executeFullTextSearch(userId, query, mode);
   }
 
+  @Get('facets')
+  @RequestCost(COST.LOW)
+  @ApiOperation({ summary: 'Get rate-limited public topic facets for discovery' })
+  async getTopicFacets(@Query('limit') limit?: number) {
+    return this.service.getPublicTopicFacets(limit ? Number(limit) : 25);
+  }
+
   @Post('presets')
   @ApiOperation({ summary: 'Save a search preset' })
   savePreset(@Req() req: any, @Body() dto: CreateSavedSearchDto) {

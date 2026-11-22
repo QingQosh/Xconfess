@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "contracts": {
+    "confession-anchor": {
+      "initial_schema_version": 1,
+      "target_schema_version": 2,
+      "entrypoint": "migrate",
+      "authorized_role": "contract owner",
+      "changes": [
+        "Initialize LastAnchorTimestamp for existing instances"
+      ]
+    },
+    "confession-registry": {
+      "initial_schema_version": 1,
+      "target_schema_version": 1,
+      "entrypoint": "migrate",
+      "authorized_role": "contract owner",
+      "changes": []
+    },
+    "anonymous-tipping": {
+      "initial_schema_version": 1,
+      "target_schema_version": 3,
+      "entrypoint": "migrate",
+      "authorized_role": "contract owner",
+      "changes": [
+        "Initialize the global tip count at 0; historical settlements are not backfilled",
+        "Add settlement receipts for post-migration settlement IDs; prior settlements are not backfilled"
+      ]
+    },
+    "reputation-badges": {
+      "initial_schema_version": 1,
+      "target_schema_version": 1,
+      "entrypoint": "migrate",
+      "authorized_role": "contract admin",
+      "changes": []
+    }
+  }
+}
